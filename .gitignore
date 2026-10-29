@@ -1,0 +1,2 @@
+# Local files that must not be committed. Nothing produced by building the
+# image needs ignoring: the build writes into podman's storage, not here.

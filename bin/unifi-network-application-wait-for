@@ -1,0 +1,46 @@
+#!/bin/bash
+# Waits until a TCP address accepts connections.
+#
+# Usage: unifi-network-application-wait-for HOST:PORT SECONDS
+#
+# HOST is a name, an IPv4 address or an [IPv6] address, e.g. mongodb:27017,
+# 127.0.0.1:27017 or [::1]:27017. Tries every 2 s, each attempt limited to
+# 5 s, and fails after SECONDS; 0 returns at once without trying. Only checks
+# that something listens, not what it is.
+#
+# HOST:PORT also goes into db.mongo.uri, so it is checked only as far as that
+# needs: HOST may contain no characters with a meaning in a URI ("/", "@",
+# "?", "#", spaces, ...), and PORT must be 1-65535. A host that is still
+# wrong (e.g. 1.2.3.999) never connects, and shows up in the timeout error.
+set -euo pipefail
+
+log() { echo "[unifi-network-application] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+usage() {
+    log "ERROR: $*"
+    echo "Usage: ${0##*/} HOST:PORT SECONDS" >&2
+    exit 2
+}
+
+[ "$#" -eq 2 ] || usage "expected 2 arguments, got $#"
+address=$1
+seconds=$2
+
+[[ $address =~ ^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):([0-9]{1,5})$ ]] ||
+    usage "not HOST:PORT (an IPv6 address goes in brackets: [::1]:27017): '$address'"
+host=${BASH_REMATCH[1]}
+port=$(( 10#${BASH_REMATCH[2]} ))
+host=${host#"["} host=${host%"]"}   # the brackets are not part of an IPv6 address
+(( port >= 1 && port <= 65535 )) || usage "not a port number (1-65535): '$address'"
+[[ $seconds =~ ^[0-9]{1,6}$ ]] || usage "not a number of seconds: '$seconds'"
+(( 10#$seconds > 0 )) || exit 0
+
+deadline=$(( SECONDS + 10#$seconds ))
+# Host and port are passed as arguments, never as code; timeout bounds an
+# attempt at an address that drops packets instead of refusing.
+# shellcheck disable=SC2016 # $1 and $2 are expanded by the inner bash
+until timeout 5 bash -c 'exec 3<>"/dev/tcp/$1/$2"' - "$host" "$port" 2>/dev/null; do
+    [ "$SECONDS" -lt "$deadline" ] || die "$address not reachable after ${seconds}s"
+    sleep 2
+done
+log "$address is reachable"

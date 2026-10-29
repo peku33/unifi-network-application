@@ -1,0 +1,37 @@
+#!/bin/bash
+# Health check of the UniFi Network Application container: succeeds when the
+# application answers on its HTTPS port.
+#
+# Usage: unifi-network-application-healthcheck   (no arguments)
+#
+# The port is unifi.https.port in system.properties (default 8443). Meant as
+# the container's health check (liveness check).
+#
+# Only the HTTP status counts, not the "up" field in the reply: that is false
+# while the application starts or migrates its database, which can take long,
+# and a liveness probe failing then would restart it mid-way.
+set -euo pipefail
+
+log() { echo "[unifi-network-application] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+usage() {
+    log "ERROR: $*"
+    echo "Usage: ${0##*/}   (no arguments)" >&2
+    exit 2
+}
+
+[ "$#" -eq 0 ] || usage "expected no arguments, got $#"
+
+props=/unifi/data/system.properties
+
+# The value of the last unifi.https.port line (as in Java, the last one wins),
+# whatever it is: it is only compared against a pattern below, never run.
+# No file or no such line means the default.
+port=$(sed -n 's/^[ \t]*unifi\.https\.port\([ \t]*[=:][ \t]*\|[ \t]\+\)//p' "$props" 2>/dev/null | tail -n 1 || true)
+port=${port%"${port##*[![:space:]]}"}   # trailing spaces, \r
+port=${port:-8443}
+if [[ ! $port =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+    die "unifi.https.port in $props is not a port number: $port"
+fi
+
+exec curl -kfs -o /dev/null --max-time 5 "https://127.0.0.1:$((10#$port))/status"

@@ -1,0 +1,102 @@
+#!/bin/bash
+# Entrypoint of the UniFi Network Application container: prepares the /unifi
+# volume and system.properties, waits for MongoDB, and starts the application.
+#
+# Usage: unifi-network-application-entrypoint   (no arguments)
+#
+# Runs as whatever (non-root) UID/GID the container is started with. That user
+# must be able to write to the /unifi volume.
+#
+# Environment (all optional):
+#   UNIFI_PROPERTIES   system.properties settings, one "key=value" per line,
+#                      e.g. system_ip=192.168.1.10 or unifi.https.port=8444
+#   MONGO_ADDRESS      MongoDB's host:port (default 127.0.0.1:27017): the
+#                      default db.mongo.uri, and what to wait for at startup
+#   MONGO_WAIT_SECONDS how long to wait for it; 0 skips waiting (default 120)
+#   JVM_MAX_HEAP       -Xmx (default 1024M)
+#   JVM_INIT_HEAP      -Xms (default unset)
+#   JVM_EXTRA_OPTS     extra JVM options, separated by whitespace or newlines
+#   TZ                 time zone, e.g. Europe/Berlin (default UTC)
+#
+# The keys in UNIFI_PROPERTIES, and the MongoDB connection defaults below,
+# are (re)applied on each start, so the environment is their source of truth;
+# other keys in system.properties are left alone.
+set -euo pipefail
+
+log() { echo "[unifi-network-application] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+usage() {
+    log "ERROR: $*"
+    echo "Usage: ${0##*/}   (no arguments; for a shell, run the image with --entrypoint bash)" >&2
+    exit 2
+}
+
+[ "$#" -eq 0 ] || usage "expected no arguments, got $#"
+
+base=/usr/lib/unifi
+data=/unifi/data
+logs=/unifi/logs
+run=/tmp/unifi-run
+props=$data/system.properties
+
+if [ "$(id -u)" -eq 0 ]; then
+    log "WARNING: running as root; start the container with a non-root user instead"
+fi
+
+# /unifi is not part of the image: it is the mount point of the data volume.
+# Without one, the data could only go into the container itself (and only as
+# root), and would be lost when the container is removed.
+if ! mountpoint -q /unifi; then
+    [ "$(id -u)" -eq 0 ] ||
+        die "nothing is mounted at /unifi: mount a volume there (e.g. -v NAME:/unifi), or --tmpfs /unifi for a throwaway run"
+    log "WARNING: nothing is mounted at /unifi: the data is lost when the container is removed"
+fi
+
+if ! mkdir -p "$data" "$logs" "$run" 2>/dev/null || [ ! -w "$data" ] || [ ! -w "$logs" ]; then
+    die "/unifi is not writable by uid=$(id -u) gid=$(id -g): give that user ownership of the volume (or host directory) mounted there"
+fi
+
+# Java would silently use GMT for a time zone it doesn't know.
+if [ -n "${TZ:-}" ] && [ ! -f "/usr/share/zoneinfo/${TZ#:}" ]; then
+    log "WARNING: TZ=$TZ is not a known time zone (e.g. Europe/Berlin); Java will use GMT"
+fi
+
+# Wait until MongoDB accepts connections: the application gives up on it
+# about 20 s after starting, and MongoDB may be starting at the same time as
+# this container. A plain TCP connect is enough: mongod only listens once its storage is
+# ready. This also rejects an invalid MONGO_ADDRESS (even with 0 seconds),
+# before it goes into db.mongo.uri below.
+mongo_address=${MONGO_ADDRESS:-127.0.0.1:27017}
+unifi-network-application-wait-for "$mongo_address" "${MONGO_WAIT_SECONDS:-120}"
+
+# The settings: the MongoDB connection, then UNIFI_PROPERTIES, which can
+# override it, e.g. db.mongo.uri with credentials or options (keep
+# MONGO_ADDRESS pointing at the same server, for the wait above).
+settings="db.mongo.local=false
+db.mongo.uri=mongodb://$mongo_address/unifi
+unifi.db.name=unifi
+${UNIFI_PROPERTIES:-}"
+
+# Write them into system.properties: replaces the lines of these keys, keeps
+# the rest of the file.
+printf '%s\n' "$settings" | unifi-network-application-set-properties "$props"
+
+# JVM_EXTRA_OPTS is split at whitespace and newlines, without the wildcard
+# expansion an unquoted $JVM_EXTRA_OPTS would also do. (-d '' reads all lines,
+# not just the first; read then reports end of input, hence "|| true".)
+read -r -d '' -a jvm_extra_opts <<< "${JVM_EXTRA_OPTS:-}" || true
+
+cd "$base"
+exec java \
+    -Xmx"${JVM_MAX_HEAP:-1024M}" \
+    ${JVM_INIT_HEAP:+-Xms"$JVM_INIT_HEAP"} \
+    -Djava.awt.headless=true \
+    -XX:+UseG1GC \
+    -XX:+ExitOnOutOfMemoryError \
+    --add-opens java.base/java.lang=ALL-UNNAMED \
+    --add-opens java.base/java.time=ALL-UNNAMED \
+    --add-opens java.base/sun.security.util=ALL-UNNAMED \
+    --add-opens java.base/java.io=ALL-UNNAMED \
+    --add-opens java.rmi/sun.rmi.transport=ALL-UNNAMED \
+    "${jvm_extra_opts[@]}" \
+    -jar "$base/lib/ace.jar" start

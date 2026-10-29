@@ -1,0 +1,121 @@
+#!/bin/bash
+# Merges settings into a Java .properties file (the application's
+# system.properties).
+#
+# Usage: unifi-network-application-set-properties FILE < SETTINGS
+#
+# SETTINGS are "key=value" lines; blank lines and "#" or "!" comments are
+# ignored, and for a key given twice the last value wins. The file is created
+# if missing. Every existing line for a key being set is removed (with its
+# continuation lines), the settings are appended, and everything else in the
+# file, comments included, is kept. The result replaces FILE by a rename, so
+# an interruption leaves either the old or the new version intact. What is
+# written is logged to stderr, with passwords in URIs masked.
+#
+# Keys may contain only letters, digits and "._-", the characters .properties
+# stores without escaping, so Java reads each key back exactly as written;
+# other lines are skipped with a warning. Spaces around "=" and at both ends
+# of a line are dropped. Values are written verbatim, so Java interprets "\"
+# escapes in them as in any .properties file. A value is skipped with a
+# warning if Java would not read it back as one value of that key: if it has
+# characters other than printable ASCII and tabs (write those as \uXXXX), a
+# "\u" without 4 hex digits, or a single "\" at the end.
+set -euo pipefail
+
+log() { echo "[unifi-network-application] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+usage() {
+    log "ERROR: $*"
+    echo "Usage: ${0##*/} FILE < SETTINGS" >&2
+    exit 2
+}
+
+[ "$#" -eq 1 ] || usage "expected 1 argument, got $#"
+file=$1
+
+touch "$file" || die "cannot create or update $file"
+# The new version is written next to FILE (same file system, so the rename
+# below is atomic), and removed if the script stops before that rename.
+tmp=$(mktemp "$(dirname "$file")/.$(basename "$file").XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+
+# The settings reach awk through the environment (ENVIRON), not as awk code
+# or "-v" (which would interpret backslashes), so no character in them has a
+# special meaning here.
+SETTINGS=$(cat) awk '
+    # log() of the shell part ("log" itself is a built-in in awk), with
+    # anything but printable ASCII shown as "?", so a rejected value cannot
+    # put control characters into the log.
+    function note(msg) { gsub(/[^\t -~]/, "?", msg); print "[unifi-network-application] " msg > "/dev/stderr" }
+    # A .properties line ending in an odd number of backslashes continues on
+    # the next line.
+    function continues(s) { return match(s, /\\+$/) && RLENGTH % 2 == 1 }
+    # Why Java would not read value v back as written, or "" if it would.
+    function bad_value(v) {
+        # Only printable ASCII and tabs: a "\r" would end the line for Java
+        # (and start a new key), other control characters are dropped or
+        # mangled, and non-ASCII bytes would be read as ISO-8859-1.
+        if (v ~ /[^\t -~]/)
+            return "it may contain only printable ASCII; write other characters as \\uXXXX"
+        # Escapes: drop escaped backslashes ("\\") and valid "\uXXXX", then
+        # no "\u" may be left (Java fails on the whole file) and no "\" at
+        # the end (it would continue onto the next line).
+        gsub(/\\\\/, "", v)
+        gsub(/\\u[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/, "", v)
+        if (v ~ /\\u/)
+            return "\\u must be followed by 4 hex digits; for a literal backslash write \\\\"
+        if (v ~ /\\$/)
+            return "it ends in \\, which would continue the line; for a literal backslash write \\\\"
+        return ""
+    }
+
+    # Parse the settings into value[key], and the keys in order of first appearance into order[].
+    BEGIN {
+        lines = split(ENVIRON["SETTINGS"], line, "\n")
+        for (i = 1; i <= lines; i++) {
+            s = line[i]
+            sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s)
+            if (s == "" || s ~ /^[#!]/) continue
+            if (!match(s, /^[A-Za-z0-9._-]+[ \t]*=[ \t]*/)) {
+                note("WARNING: ignoring setting, not key=value with a key of letters, digits and ._- : " s)
+                continue
+            }
+            key = substr(s, 1, RLENGTH); sub(/[ \t]*=.*/, "", key)
+            val = substr(s, RLENGTH + 1)
+            if ((why = bad_value(val)) != "") {
+                note("WARNING: ignoring setting, " why ": " s)
+                continue
+            }
+            if (!(key in value)) order[++keys] = key
+            value[key] = val
+        }
+    }
+
+    # system.properties: continuation lines go with the line they continue.
+    continued { continued = continues($0); if (!drop) print; next }
+    # Comments and blank lines are kept (and never continue).
+    /^[ \t\f]*([#!]|$)/ { print; next }
+    # Other lines are kept unless their key is being set. The key ends at the
+    # first "=", ":" or whitespace. (Java skips escaped ones, "\=", but such a
+    # key contains a backslash and so never matches a setting anyway.)
+    {
+        key = $0
+        sub(/^[ \t\f]+/, "", key); sub(/[=: \t\f].*/, "", key)
+        drop = key in value
+        continued = continues($0)
+        if (!drop) print
+    }
+
+    END {
+        if (continued) print ""  # end a continuation left open on the last line
+        name = FILENAME; sub(/.*\//, "", name)
+        for (i = 1; i <= keys; i++) {
+            key = order[i]
+            print key "=" value[key]
+            shown = value[key]
+            sub(/\/\/[^\/@]*@/, "//***@", shown)  # hide credentials in URIs
+            note(name ": " key "=" shown)
+        }
+    }
+' "$file" > "$tmp"
+mv "$tmp" "$file"

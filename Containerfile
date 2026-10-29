@@ -1,0 +1,65 @@
+# UniFi Network Application (standalone "unix" build) on Temurin 25.
+# Multi-arch: works for linux/amd64 and linux/arm64 (the zip ships native libs for both).
+#
+# Usually built through ./build.sh, which looks up the version and checksum.
+# By hand:
+#   podman build --build-arg UNIFI_VERSION=<version> [--build-arg UNIFI_SHA256=<sha256>] \
+#       -t localhost/unifi-network-application:<version> \
+#       -t localhost/unifi-network-application:latest .
+#
+# Build args (a bare "--build-arg NAME" takes the value from the environment):
+#   UNIFI_VERSION  required, e.g. 10.6.109
+#   UNIFI_SHA256   optional: SHA-256 of UniFi.unix.zip. Without it the download
+#                  is not verified (the build prints a warning).
+FROM docker.io/library/eclipse-temurin:25-jre-noble
+
+ARG UNIFI_VERSION
+ARG UNIFI_SHA256
+
+RUN set -eu; \
+    if [ -z "${UNIFI_VERSION:-}" ]; then \
+        echo "ERROR: pass the version: --build-arg UNIFI_VERSION=<version> (or use ./build.sh)" >&2; exit 1; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl tini unzip; \
+    curl -fsSL -o /tmp/unifi.zip "https://dl.ui.com/unifi/${UNIFI_VERSION}/UniFi.unix.zip"; \
+    # "<hash>  <file>" (two spaces) is the standard line format of sha256sum.
+    if [ -n "${UNIFI_SHA256:-}" ]; then \
+        echo "${UNIFI_SHA256}  /tmp/unifi.zip" | sha256sum -c -; \
+    else \
+        echo "WARNING: no UNIFI_SHA256 given, the download of ${UNIFI_VERSION} is NOT verified" >&2; \
+    fi; \
+    # Unpack into an empty directory and take only the expected UniFi/ from
+    # it, so an unexpected zip layout fails the build instead of spilling
+    # files into the image.
+    mkdir /tmp/unifi-unpacked; \
+    unzip -q /tmp/unifi.zip -d /tmp/unifi-unpacked; \
+    if [ "$(ls -A /tmp/unifi-unpacked)" != "UniFi" ]; then \
+        echo "ERROR: expected only UniFi/ in the zip, found: $(ls -A /tmp/unifi-unpacked | tr '\n' ' ')" >&2; exit 1; \
+    fi; \
+    mv /tmp/unifi-unpacked/UniFi /usr/lib/unifi; \
+    # MongoDB runs in its own container; the application must never spawn a local mongod.
+    rm -rf /tmp/unifi.zip /tmp/unifi-unpacked /usr/lib/unifi/bin/mongod /usr/lib/unifi/readme.txt; \
+    # Everything the application writes goes to /unifi (persistent) or /tmp (ephemeral).
+    # /unifi deliberately does not exist in the image: podman would otherwise
+    # copy its (root) ownership into a fresh named volume mounted there.
+    ln -s /unifi/data /usr/lib/unifi/data; \
+    ln -s /unifi/logs /usr/lib/unifi/logs; \
+    ln -s /tmp/unifi-run /usr/lib/unifi/run; \
+    apt-get purge -y unzip; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
+
+# The container's scripts: entrypoint, health check and their helpers.
+COPY --chmod=0755 bin/ /usr/local/bin/
+
+# The container is meant to run as an arbitrary non-root UID (runAsUser / --user),
+# which has no passwd entry, so give Java a writable HOME.
+ENV HOME=/tmp \
+    UNIFI_VERSION=${UNIFI_VERSION}
+LABEL org.opencontainers.image.title="UniFi Network Application" \
+      org.opencontainers.image.version=${UNIFI_VERSION}
+
+WORKDIR /usr/lib/unifi
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/unifi-network-application-entrypoint"]

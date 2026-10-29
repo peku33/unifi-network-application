@@ -1,0 +1,106 @@
+# UniFi Network Application + MongoDB with podman-compose (rootless).
+# An alternative to ../podman-kube/ (podman kube play); see README.md here.
+#
+#   cp .env.example .env && $EDITOR .env
+#   podman volume create unifi-network-application-data
+#   podman volume create unifi-network-application-mongodb
+#   podman-compose up -d
+#   podman-compose down
+name: unifi-network-application
+
+x-podman:
+  # Separate containers instead of a pod: with a pod, podman-compose still
+  # gives each container its own network. The application shares MongoDB's
+  # network namespace through network_mode below instead.
+  in_pod: false
+
+services:
+  mongodb:
+    # MongoDB >= 5.0 needs AVX (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
+    image: docker.io/library/mongo:${MONGO_VERSION:-8.0}
+    container_name: unifi-network-application-mongodb
+    # /data/unifi-db, not the image's /data/db: podman would copy that
+    # directory's ownership (uid 999) into a fresh named volume.
+    command:
+      - --dbpath
+      - /data/unifi-db
+      - --bind_ip
+      - 127.0.0.1
+      - --wiredTigerCacheSizeGB
+      - "${MONGO_CACHE_SIZE_GB:-0.25}"
+    userns_mode: keep-id
+    volumes:
+      - mongodb:/data/unifi-db
+    # The image declares /data/db and /data/configdb volumes, which would
+    # leave anonymous volumes behind on each "down"; mongod uses neither here.
+    tmpfs:
+      - /data/db
+      - /data/configdb
+    # The application joins this container's network namespace, so every port
+    # it serves is published here. MongoDB itself (127.0.0.1:27017) never is.
+    ports:
+      - "${UNIFI_HTTP_PORT:-8080}:${UNIFI_HTTP_PORT:-8080}"   # device inform
+      - "${UNIFI_HTTPS_PORT:-8443}:${UNIFI_HTTPS_PORT:-8443}" # UI / API
+      - "3478:3478/udp"                                       # STUN
+      - "10001:10001/udp"                                     # device discovery
+      # Optional (see ../README.md#ports):
+      # - "6789:6789"           # mobile speed test
+      # - "8880:8880"           # hotspot portal http
+      # - "8843:8843"           # hotspot portal https
+      # - "28082:28082"         # packet captures, support files
+      # - "5514:5514/udp"       # remote syslog
+      # - "1900:1900/udp"       # L2 discovery of the application
+    environment:
+      TZ: ${TZ:-UTC}
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  app:
+    # UNIFI_IMAGE in .env. Pulled only when missing; a localhost/ image is
+    # never pulled: build it before the first start.
+    image: ${UNIFI_IMAGE:-ghcr.io/peku33/unifi-network-application:latest}
+    container_name: unifi-network-application-app
+    # Join MongoDB's network namespace (shared 127.0.0.1) and its keep-id user
+    # namespace: joining a network namespace owned by another user namespace
+    # fails ("error mounting sysfs ... operation not permitted"). A container
+    # that joins a keep-id namespace starts as its root (one of your sub-UIDs
+    # on the host), hence the explicit user.
+    network_mode: service:mongodb
+    userns_mode: container:unifi-network-application-mongodb
+    user: "${PUID:?set PUID in .env (id -u)}:${PGID:?set PGID in .env (id -g)}"
+    # Started after MongoDB; its entrypoint waits until MongoDB accepts
+    # connections (MONGO_WAIT_SECONDS).
+    depends_on:
+      - mongodb
+    # From .env; an empty value means the application's default.
+    environment:
+      TZ: ${TZ:-UTC}
+      JVM_MAX_HEAP: ${JVM_MAX_HEAP:-}
+      JVM_INIT_HEAP: ${JVM_INIT_HEAP:-}
+      JVM_EXTRA_OPTS: ${JVM_EXTRA_OPTS:-}
+      MONGO_ADDRESS: ${MONGO_ADDRESS:-}
+      MONGO_WAIT_SECONDS: ${MONGO_WAIT_SECONDS:-}
+      # The ports published above, then your own settings.
+      UNIFI_PROPERTIES: "unifi.http.port=${UNIFI_HTTP_PORT:-8080}\nunifi.https.port=${UNIFI_HTTPS_PORT:-8443}\n${UNIFI_PROPERTIES:-}"
+    volumes:
+      - data:/unifi
+    # Every 60 s after the first 300 s (startup and database migrations),
+    # unhealthy after 3 misses.
+    healthcheck:
+      test: ["CMD", "unifi-network-application-healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+# Created beforehand with "podman volume create" (see top), so they are
+# browsable by you on the host; shared with ../podman-kube/.
+volumes:
+  data:
+    name: unifi-network-application-data
+    external: true
+  mongodb:
+    name: unifi-network-application-mongodb
+    external: true

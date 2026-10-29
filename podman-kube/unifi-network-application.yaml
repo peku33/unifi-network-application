@@ -1,0 +1,120 @@
+# UniFi Network Application + MongoDB as one rootless podman pod.
+#
+# Both containers share the pod's network namespace: MongoDB listens on
+# 127.0.0.1 only and is never published. Run with --userns=keep-id so both
+# containers run as your own user and the volumes are owned by you.
+#
+# Settings live in unifi-network-application-config.yaml; this file only needs
+# editing to change the images, published ports or volumes.
+#
+#   podman kube play --configmap unifi-network-application-config.yaml \
+#       --userns=keep-id --replace unifi-network-application.yaml
+#   podman kube down unifi-network-application.yaml
+#
+# For systemd, use unifi-network-application.kube next to this file instead
+# (see README.md).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unifi-network-application
+  labels:
+    app: unifi-network-application
+spec:
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 90
+  containers:
+    - name: mongodb
+      # The newest major version the application supports. It needs AVX
+      # (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
+      image: docker.io/library/mongo:8.0
+      # The database lives in /data/unifi-db, not the image's /data/db: podman
+      # would copy that directory's ownership (uid 999) into a fresh named volume.
+      args:
+        - --dbpath
+        - /data/unifi-db
+        - --bind_ip
+        - 127.0.0.1
+        - --wiredTigerCacheSizeGB
+        - $(MONGO_CACHE_SIZE_GB)   # from env below
+      env:
+        - name: TZ
+          valueFrom:
+            configMapKeyRef:
+              name: unifi-network-application-config
+              key: TZ
+        - name: MONGO_CACHE_SIZE_GB
+          valueFrom:
+            configMapKeyRef:
+              name: unifi-network-application-config
+              key: MONGO_CACHE_SIZE_GB
+      volumeMounts:
+        - name: mongodb
+          mountPath: /data/unifi-db
+        # The image declares /data/db and /data/configdb volumes; mongod uses
+        # neither here, so they are throwaway emptyDirs.
+        - name: mongodb-unused-db
+          mountPath: /data/db
+        - name: mongodb-unused-configdb
+          mountPath: /data/configdb
+
+    - name: app
+      # The published image; any tag works, e.g. :10.6.109 to pin a version.
+      # For one built on this host with ../app/build.sh --latest, use
+      # localhost/unifi-network-application:latest.
+      image: ghcr.io/peku33/unifi-network-application:latest
+      # Pulled only when missing, so a newer :latest is not pulled on restart.
+      # A localhost/ image can't be pulled: build it before the first start.
+      imagePullPolicy: IfNotPresent
+      envFrom:
+        - configMapRef:
+            name: unifi-network-application-config
+      # Must match unifi.http.port / unifi.https.port in the config.
+      ports:
+        - containerPort: 8080 # device inform
+          hostPort: 8080
+        - containerPort: 8443 # UI / API
+          hostPort: 8443
+        - containerPort: 3478 # STUN
+          hostPort: 3478
+          protocol: UDP
+        - containerPort: 10001 # device discovery
+          hostPort: 10001
+          protocol: UDP
+        # Optional (see ../README.md#ports):
+        # - { containerPort: 6789, hostPort: 6789 }                 # mobile speed test
+        # - { containerPort: 8880, hostPort: 8880 }                 # hotspot portal http
+        # - { containerPort: 8843, hostPort: 8843 }                 # hotspot portal https
+        # - { containerPort: 28082, hostPort: 28082 }               # packet captures, support files
+        # - { containerPort: 5514, hostPort: 5514, protocol: UDP }  # remote syslog
+        # - { containerPort: 1900, hostPort: 1900, protocol: UDP }  # L2 discovery of the application
+      # The same health check as in the compose setups: every 60 s after the
+      # first 300 s (startup and database migrations), failing after 3 misses.
+      livenessProbe:
+        exec:
+          command: [unifi-network-application-healthcheck]
+        initialDelaySeconds: 300
+        periodSeconds: 60
+        timeoutSeconds: 10
+        failureThreshold: 3
+      volumeMounts:
+        - name: data
+          mountPath: /unifi
+
+  volumes:
+    # Named podman volumes, owned by your user. Create them before the first
+    # start (podman volume create ...): a volume that "kube play" creates
+    # implicitly can't be opened from the host without "podman unshare".
+    # Location on the host:
+    #   podman volume inspect unifi-network-application-data --format '{{.Mountpoint}}'
+    # To use host directories instead, replace with e.g.
+    #   hostPath: { path: /home/you/unifi-network-application/data, type: Directory }
+    - name: data
+      persistentVolumeClaim:
+        claimName: unifi-network-application-data
+    - name: mongodb
+      persistentVolumeClaim:
+        claimName: unifi-network-application-mongodb
+    - name: mongodb-unused-db
+      emptyDir: {}
+    - name: mongodb-unused-configdb
+      emptyDir: {}

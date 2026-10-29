@@ -1,0 +1,101 @@
+# UniFi Network Application + MongoDB with Docker Compose; see README.md here.
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d
+#   docker compose down
+name: unifi-network-application
+
+services:
+  mongodb:
+    # MongoDB >= 5.0 needs AVX (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
+    image: docker.io/library/mongo:${MONGO_VERSION:-8.0}
+    container_name: unifi-network-application-mongodb
+    # The database stays in the image's /data/db: started as root, the image
+    # makes only /data/db and /data/configdb writable for its mongodb user.
+    command:
+      - --bind_ip
+      - 127.0.0.1
+      - --wiredTigerCacheSizeGB
+      - "${MONGO_CACHE_SIZE_GB:-0.25}"
+    volumes:
+      - mongodb:/data/db
+    # The image declares /data/configdb a volume too, which would leave an
+    # anonymous volume behind on each "down"; mongod doesn't use it here.
+    tmpfs:
+      - /data/configdb
+    # The application joins this container's network namespace, so every port
+    # it serves is published here. MongoDB itself (127.0.0.1:27017) never is.
+    ports:
+      - "${UNIFI_HTTP_PORT:-8080}:${UNIFI_HTTP_PORT:-8080}"   # device inform
+      - "${UNIFI_HTTPS_PORT:-8443}:${UNIFI_HTTPS_PORT:-8443}" # UI / API
+      - "3478:3478/udp"                                       # STUN
+      - "10001:10001/udp"                                     # device discovery
+      # Optional (see ../README.md#ports):
+      # - "6789:6789"           # mobile speed test
+      # - "8880:8880"           # hotspot portal http
+      # - "8843:8843"           # hotspot portal https
+      # - "28082:28082"         # packet captures, support files
+      # - "5514:5514/udp"       # remote syslog
+      # - "1900:1900/udp"       # L2 discovery of the application
+    environment:
+      TZ: ${TZ:-UTC}
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  # Hands the data volume to the application's user before it starts: docker
+  # creates a new volume owned by root, and the application doesn't run as
+  # root. Runs on every "up" and exits at once; it changes only the top
+  # directory, everything below is created by the application itself.
+  data-owner:
+    image: ${UNIFI_IMAGE:-ghcr.io/peku33/unifi-network-application:latest}
+    container_name: unifi-network-application-data-owner
+    user: "0:0"
+    entrypoint: ["chown", "${PUID:-1000}:${PGID:-1000}", "/unifi"]
+    network_mode: none
+    volumes:
+      - data:/unifi
+    restart: "no"
+
+  app:
+    # UNIFI_IMAGE in .env. Pulled only when missing.
+    image: ${UNIFI_IMAGE:-ghcr.io/peku33/unifi-network-application:latest}
+    container_name: unifi-network-application-app
+    # Shares MongoDB's network namespace, and so its 127.0.0.1.
+    network_mode: service:mongodb
+    user: "${PUID:-1000}:${PGID:-1000}"
+    # Started after MongoDB (its entrypoint waits until MongoDB accepts
+    # connections, see MONGO_WAIT_SECONDS) and after data-owner is done.
+    depends_on:
+      mongodb:
+        condition: service_started
+      data-owner:
+        condition: service_completed_successfully
+    # From .env; an empty value means the application's default.
+    environment:
+      TZ: ${TZ:-UTC}
+      JVM_MAX_HEAP: ${JVM_MAX_HEAP:-}
+      JVM_INIT_HEAP: ${JVM_INIT_HEAP:-}
+      JVM_EXTRA_OPTS: ${JVM_EXTRA_OPTS:-}
+      MONGO_ADDRESS: ${MONGO_ADDRESS:-}
+      MONGO_WAIT_SECONDS: ${MONGO_WAIT_SECONDS:-}
+      # The ports published above, then your own settings.
+      UNIFI_PROPERTIES: "unifi.http.port=${UNIFI_HTTP_PORT:-8080}\nunifi.https.port=${UNIFI_HTTPS_PORT:-8443}\n${UNIFI_PROPERTIES:-}"
+    volumes:
+      - data:/unifi
+    # Every 60 s after the first 300 s (startup and database migrations),
+    # unhealthy after 3 misses.
+    healthcheck:
+      test: ["CMD", "unifi-network-application-healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+# Created by "docker compose up" under these names (not prefixed).
+volumes:
+  data:
+    name: unifi-network-application-data
+  mongodb:
+    name: unifi-network-application-mongodb

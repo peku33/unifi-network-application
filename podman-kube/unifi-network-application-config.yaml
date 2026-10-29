@@ -1,0 +1,37 @@
+# Settings for the pod (unifi-network-application.yaml), passed to the
+# containers as environment variables; see ../README.md#configuration.
+# Values must be strings (quote numbers). Keep every key: one left empty ("")
+# means the default named in its comment.
+#
+# Used by unifi-network-application.kube, or by hand:
+#   podman kube play --configmap unifi-network-application-config.yaml \
+#       --userns=keep-id --replace unifi-network-application.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unifi-network-application-config
+data:
+  # system.properties settings, one "key=value" per line.
+  UNIFI_PROPERTIES: |
+    # Set this: the address devices are told to inform to, the host's LAN IP.
+    # system_ip=192.168.1.10
+
+    # Device inform and UI ports, applied on every start. If you change them,
+    # change containerPort/hostPort in unifi-network-application.yaml too.
+    unifi.http.port=8080
+    unifi.https.port=8443
+
+  # Time zone, e.g. Europe/Berlin (empty: UTC).
+  TZ: UTC
+  # JVM heap: -Xmx (empty: 1024M) and -Xms (empty: unset), e.g. 512M or 2G.
+  JVM_MAX_HEAP: ""
+  JVM_INIT_HEAP: ""
+  # Extra JVM options (empty: none).
+  JVM_EXTRA_OPTS: ""
+  # MongoDB's host:port (empty: 127.0.0.1:27017, the MongoDB in this pod).
+  MONGO_ADDRESS: ""
+  # How long to wait for MongoDB at startup, in seconds (empty: 120).
+  MONGO_WAIT_SECONDS: ""
+  # MongoDB's cache, in GB: 0.25 is the smallest it accepts. MongoDB's
+  # argument, so it can't be empty.
+  MONGO_CACHE_SIZE_GB: "0.25"

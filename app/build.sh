@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
 # Builds the UniFi Network Application image with a verified download.
 #
-# Usage: ./build.sh [OPTIONS] [VERSION] [-- PODMAN_BUILD_ARGS...]
+# Usage: ./build.sh [OPTIONS] [VERSION] [-- BUILD_ARGS...]
 #
 #   ./build.sh                      build the latest release
 #   ./build.sh 10.6.109             build a specific version
 #   ./build.sh --latest             ... and also tag it IMAGE:latest
 #   ./build.sh --no-build           only look up the latest version and checksum
-#   ./build.sh -- --pull=always     pass extra arguments to "podman build"
+#   ./build.sh -- --pull=always     pass extra arguments to "podman/docker build"
 #
 # Options:
-#   -i, --image NAME   image name, without tag (default: localhost/unifi-network-application)
-#   -l, --latest       also tag the image NAME:latest
-#   -n, --no-build     only look up and print the version and checksum
-#   -h, --help         show this help
+#   -i, --image NAME    image name, without tag (default: localhost/unifi-network-application)
+#   -e, --engine NAME   podman or docker (default: podman if installed, else docker)
+#   -l, --latest        also tag the image NAME:latest
+#   -n, --no-build      only look up and print the version and checksum
+#   -h, --help          show this help
 #
 # Looks up the version (the latest release unless one is given) and the
 # SHA-256 of its UniFi.unix.zip in Ubiquiti's update API (fw-update.ubnt.com),
-# then runs "podman build" with both. The Containerfile itself only downloads
-# the zip from dl.ui.com. A version the API doesn't list is built without
-# checksum verification, with a warning.
+# then runs "podman build" (or "docker build") with both. The Containerfile
+# itself only downloads the zip from dl.ui.com. A version the API doesn't list
+# is built without checksum verification, with a warning.
 #
-# Output: progress messages and podman's build log go to stderr. stdout gets
+# Output: progress messages and the build log go to stderr. stdout gets
 # only KEY=VALUE lines, printed once the lookup (and build) succeeded, so
 # scripts can use them with eval, $GITHUB_OUTPUT or as an .env file:
 #   UNIFI_VERSION=10.6.109
@@ -29,7 +30,7 @@
 #   IMAGE=localhost/unifi-network-application:10.6.109
 # Exits 1 on errors, 2 on wrong usage.
 #
-# Needs curl and jq, and podman unless --no-build is given.
+# Needs curl and jq, and podman or docker unless --no-build is given.
 #
 # (--help prints this header: every comment line up to the first non-comment line.)
 set -euo pipefail
@@ -38,7 +39,7 @@ log() { echo "[unifi-network-application] $*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 usage() {
     log "ERROR: $*"
-    echo "Usage: ${0##*/} [OPTIONS] [VERSION] [-- PODMAN_BUILD_ARGS...]   (--help for details)" >&2
+    echo "Usage: ${0##*/} [OPTIONS] [VERSION] [-- BUILD_ARGS...]   (--help for details)" >&2
     exit 2
 }
 help() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
@@ -50,8 +51,9 @@ api_url="https://fw-update.ubnt.com/api/firmware?filter=eq~~product~~unifi-contr
 # A version as Ubiquiti numbers them: three numbers without leading zeros.
 version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 
-# Parse the arguments: options, an optional VERSION, then "--" and podman args.
+# Parse the arguments: options, an optional VERSION, then "--" and build args.
 image=localhost/unifi-network-application
+engine=""
 tag_latest=false
 build=true
 version=""
@@ -59,6 +61,8 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         -i|--image) [ "$#" -ge 2 ] || usage "$1 needs a value"; image=$2; shift 2 ;;
         --image=*) image=${1#*=}; shift ;;
+        -e|--engine) [ "$#" -ge 2 ] || usage "$1 needs a value"; engine=$2; shift 2 ;;
+        --engine=*) engine=${1#*=}; shift ;;
         -l|--latest) tag_latest=true; shift ;;
         -n|--no-build) build=false; shift ;;
         -h|--help) help ;;
@@ -67,14 +71,21 @@ while [ "$#" -gt 0 ]; do
         *) [ -z "$version" ] || usage "more than one version given: $version, $1"; version=$1; shift ;;
     esac
 done
-# Whatever is left in "$@" is passed to podman build.
+# Whatever is left in "$@" is passed to the build command.
 [ -n "$image" ] || usage "the image name is empty"
+case "$engine" in
+    podman|docker|"") ;;
+    *) usage "--engine must be podman or docker, got: $engine" ;;
+esac
 [ -z "$version" ] || [[ $version =~ $version_pattern ]] ||
     usage "VERSION must look like 10.6.109, got: $version"
 
 # Check that the tools this run needs are installed.
+if $build && [ -z "$engine" ]; then
+    if command -v podman >/dev/null; then engine=podman; else engine=docker; fi
+fi
 tools=(curl jq)
-if $build; then tools+=(podman); fi
+if $build; then tools+=("$engine"); fi
 for tool in "${tools[@]}"; do
     command -v "$tool" >/dev/null || die "$tool is required"
 done
@@ -128,15 +139,17 @@ fi
 
 # Build the image from the directory this script is in, tagged with the
 # version (and latest if asked), passing the checksum when there is one.
-# podman's output goes to stderr, keeping stdout for the result below.
+# The build's output goes to stderr, keeping stdout for the result below.
+# The Containerfile is named explicitly: docker looks for a Dockerfile.
 if $build; then
     names=("$image:$version")
     if $tag_latest; then names+=("$image:latest"); fi
     build_args=(--build-arg "UNIFI_VERSION=$version")
     if [ -n "$sha256" ]; then build_args+=(--build-arg "UNIFI_SHA256=$sha256"); fi
-    log "building ${names[*]}"
-    podman build "${build_args[@]}" "${names[@]/#/--tag=}" "$@" "$(dirname "$0")" >&2 ||
-        die "podman build failed"
+    dir=$(dirname "$0")
+    log "building ${names[*]} with $engine"
+    "$engine" build "${build_args[@]}" "${names[@]/#/--tag=}" --file "$dir/Containerfile" "$@" "$dir" >&2 ||
+        die "$engine build failed"
 fi
 
 # The result, for scripts.

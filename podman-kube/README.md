@@ -94,6 +94,34 @@ Images are pulled only when missing, so get the new image first, then run
   A missing image is pulled on start; a `localhost/` one must be built first,
   e.g. `../app/build.sh <version>`.
 
+## Automatic updates
+
+Off by default. When on, podman checks once a day for new images of the tags
+in use, the application's (`:latest` by default) and MongoDB's (`8`). When one
+changed, it restarts the service onto it, with the same orderly stop as
+`systemctl --user restart`. If the service then fails to start, it goes back
+to the previous images. To turn them on, uncomment `AutoUpdate=registry` in the
+installed `~/.config/containers/systemd/unifi-network-application.kube`, then:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user restart unifi-network-application
+systemctl --user enable --now podman-auto-update.timer
+podman auto-update --dry-run    # lists the containers it covers, and pending updates
+```
+
+- **A pinned application version** (e.g. `:10.6.109`) has no newer image, so
+  only MongoDB is updated.
+- **An image you build:** use `AutoUpdate=mongodb/registry` and
+  `AutoUpdate=app/local` instead. After you build a new `:latest` with
+  `../app/build.sh --latest`, the next run restarts the application onto it.
+- **Backups:** a new version migrates the database on its first start, which
+  going back to the previous image doesn't undo. Enable the application's
+  scheduled backups, so there is one from before each update.
+- `podman-auto-update.timer` runs daily around midnight, for all of your
+  containers marked for it. `systemctl --user edit podman-auto-update.timer`
+  changes that.
+
 ## Shutdown
 
 `unifi-network-application.kube` adds two `ExecStop` lines on top of what

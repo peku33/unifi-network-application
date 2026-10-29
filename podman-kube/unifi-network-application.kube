@@ -12,6 +12,8 @@ Yaml=unifi-network-application.yaml
 ConfigMap=unifi-network-application-config.yaml
 # Run the containers as your own UID/GID, so the volumes stay owned by you.
 UserNS=keep-id
+# Automatic updates, off by default: uncomment, and see README.md#automatic-updates.
+#AutoUpdate=registry
 
 [Service]
 # Quadlet only adds "ExecStopPost=podman kube down", which removes the pod

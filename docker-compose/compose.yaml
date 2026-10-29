@@ -8,7 +8,7 @@ name: unifi-network-application
 services:
   mongodb:
     # MongoDB >= 5.0 needs AVX (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
-    image: docker.io/library/mongo:${MONGO_VERSION:-8.0}
+    image: docker.io/library/mongo:${MONGO_VERSION:-8}
     container_name: unifi-network-application-mongodb
     # The database stays in the image's /data/db: started as root, the image
     # makes only /data/db and /data/configdb writable for its mongodb user.

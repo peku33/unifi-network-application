@@ -24,9 +24,9 @@ spec:
   terminationGracePeriodSeconds: 90
   containers:
     - name: mongodb
-      # The newest major version the application supports. It needs AVX
-      # (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
-      image: docker.io/library/mongo:8.0
+      # The newest 8.x release. It needs AVX (amd64) or ARMv8.2-A (arm64);
+      # see ../README.md#cpu-support.
+      image: docker.io/library/mongo:8
       # The database lives in /data/unifi-db, not the image's /data/db: podman
       # would copy that directory's ownership (uid 999) into a fresh named volume.
       args:

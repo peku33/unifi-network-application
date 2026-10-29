@@ -17,7 +17,7 @@ x-podman:
 services:
   mongodb:
     # MongoDB >= 5.0 needs AVX (amd64) or ARMv8.2-A (arm64); see ../README.md#cpu-support.
-    image: docker.io/library/mongo:${MONGO_VERSION:-8.0}
+    image: docker.io/library/mongo:${MONGO_VERSION:-8}
     container_name: unifi-network-application-mongodb
     # /data/unifi-db, not the image's /data/db: podman would copy that
     # directory's ownership (uid 999) into a fresh named volume.

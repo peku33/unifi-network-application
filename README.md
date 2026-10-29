@@ -179,12 +179,16 @@ CPUs, use MongoDB 4.4.18. 32-bit systems are not supported: use a 64-bit OS.
 
 | CPU | MongoDB image |
 |---|---|
-| amd64 with AVX; arm64 ARMv8.2-A or newer | `docker.io/library/mongo:8.0` (the default: the newest the application supports) |
+| amd64 with AVX; arm64 ARMv8.2-A or newer | `docker.io/library/mongo:8` (the default: the newest 8.x release) |
 | amd64 without AVX; arm64 ARMv8.0 (e.g. Raspberry Pi 4) | `docker.io/library/mongo:4.4.18` |
 
 Where to set it: the `mongodb` container's `image:` in
 `unifi-network-application.yaml` (podman-kube), `MONGO_VERSION` in `.env`
 (compose).
+
+`mongo:8` follows MongoDB's 8.x releases: an existing database is upgraded in
+place when a newer 8.x image is pulled (tested from 8.0 to 8.3 with the
+application 10.6.109). To stay on one, use its tag, e.g. `mongo:8.0`.
 
 You can't switch MongoDB versions in place across major versions. To change
 versions, take a backup in the UI, start with an empty database volume and

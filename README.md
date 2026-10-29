@@ -10,7 +10,7 @@ from outside, and the settings are in one file.
 | Directory | Runs with | Starts at boot |
 |---|---|---|
 | [`podman-kube/`](podman-kube/README.md) (recommended for podman) | `podman kube play`, rootless, as a pod | systemd user service (Quadlet) |
-| [`podman-compose/`](podman-compose/README.md) | podman-compose, rootless | a systemd user unit (example in its README) |
+| [`podman-compose/`](podman-compose/README.md) | podman-compose, rootless | a systemd user unit |
 | [`docker-compose/`](docker-compose/README.md) | `docker compose` | docker's restart policy |
 
 Each directory's README has the installation steps; the sections below

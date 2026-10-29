@@ -1,0 +1,19 @@
+# systemd user unit that starts the stack at boot. See README.md.
+[Unit]
+Description=UniFi Network Application
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# This directory, and the path of podman-compose (command -v podman-compose).
+WorkingDirectory=%h/unifi-network-application/podman-compose
+# The first start pulls the images. "down" waits up to 90 s per container.
+ExecStart=/usr/bin/podman-compose up -d
+ExecStop=/usr/bin/podman-compose down
+TimeoutStartSec=600
+TimeoutStopSec=200
+
+[Install]
+WantedBy=default.target

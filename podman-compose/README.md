@@ -9,6 +9,7 @@ integrates with systemd through Quadlet.
 |---|---|
 | `compose.yaml` | `app` + `mongodb` services |
 | `.env.example` | Settings: copy to `.env` |
+| `unifi-network-application.service` | systemd user unit that starts the stack at boot |
 
 ## Requirements
 
@@ -58,32 +59,15 @@ The volumes are the same ones podman-kube uses, so run only one of the two
 at a time.
 
 podman-compose has no Quadlet integration. To start the stack at boot (with
-lingering enabled, see above), use a systemd user unit that runs
-`podman-compose up -d` / `down`. Set `WorkingDirectory` to this directory and
-the podman-compose path to the output of `command -v podman-compose`:
-
-```ini
-# ~/.config/systemd/user/unifi-network-application.service
-[Unit]
-Description=UniFi Network Application
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=%h/unifi-network-application/podman-compose
-# The first start pulls the images. "down" waits up to 90 s per container.
-ExecStart=/usr/bin/podman-compose up -d
-ExecStop=/usr/bin/podman-compose down
-TimeoutStartSec=600
-TimeoutStopSec=200
-
-[Install]
-WantedBy=default.target
-```
+lingering enabled, see above), install `unifi-network-application.service`
+as a systemd user unit. It runs `podman-compose up -d` / `down` in
+`~/unifi-network-application/podman-compose`, with `/usr/bin/podman-compose`;
+if this directory or podman-compose (`command -v podman-compose`) is
+elsewhere, change `WorkingDirectory` and the two `Exec` lines in the copy.
 
 ```sh
+mkdir -p ~/.config/systemd/user
+cp unifi-network-application.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now unifi-network-application
 ```

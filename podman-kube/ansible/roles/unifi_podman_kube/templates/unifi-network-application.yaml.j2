@@ -1,0 +1,30 @@
+{#- Derived from podman-kube/unifi-network-application.yaml: only the images, the
+    published ports and the network mode are replaced; everything else stays
+    as in the plain setup. -#}
+{%- set pod = lookup('ansible.builtin.file', unifi_setup_dir ~ '/unifi-network-application.yaml') | from_yaml -%}
+{%- set ports = [] -%}
+{%- for p in unifi_ports -%}
+{%-   set _ = ports.append({
+        'containerPort': p.port | int,
+        'hostPort': p.host_port | default(p.port) | int,
+        'protocol': p.protocol | default('tcp') | upper,
+      }) -%}
+{%- endfor -%}
+{%- for c in pod.spec.containers -%}
+{%-   if c.name == 'mongodb' -%}
+{%-     set _ = c.update({'image': 'docker.io/library/mongo:' ~ unifi_mongo_version}) -%}
+{%-   elif c.name == 'app' -%}
+{%-     set _ = c.update({'image': unifi_image ~ ':' ~ unifi_image_tag}) -%}
+{%-     if unifi_host_network | bool -%}
+{%-       set _ = c.pop('ports', None) -%}
+{%-     else -%}
+{%-       set _ = c.update({'ports': ports}) -%}
+{%-     endif -%}
+{%-   endif -%}
+{%- endfor -%}
+{%- if unifi_host_network | bool -%}
+{%-   set _ = pod.spec.update({'hostNetwork': true}) -%}
+{%- endif -%}
+# {{ ansible_managed }}
+# Generated from podman-kube/unifi-network-application.yaml with this host's images and ports.
+{{ pod | to_nice_yaml(indent=2, sort_keys=false) }}

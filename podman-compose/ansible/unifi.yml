@@ -1,0 +1,12 @@
+# Deploys the podman-compose setup (../compose.yaml) with the
+# unifi_podman_compose role, on the hosts in the "unifi" group. See README.md.
+#
+#   ansible-galaxy collection install containers.podman
+#   ansible-playbook -i <inventory> podman-compose/ansible/unifi.yml
+#
+# Set the role's variables (roles/unifi_podman_compose/defaults/main.yml) in host_vars /
+# group_vars.
+- name: UniFi Network Application (rootless podman-compose)
+  hosts: unifi
+  roles:
+    - unifi_podman_compose

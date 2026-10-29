@@ -1,0 +1,16 @@
+# Derived from the settings in defaults/main.yml; not meant to be overridden.
+
+# The docker-compose setup this role deploys, and the image build context.
+unifi_setup_dir: "{{ role_path }}/../../.."
+unifi_app_dir: "{{ role_path }}/../../../../app"
+unifi_image_build: "{{ unifi_image is match('localhost/') }}"
+# The tag deployed: unifi_version, except that a "latest" that is built is
+# resolved to the release number (see tasks/main.yml), so the deployment
+# changes, and restarts, when a new release is built.
+unifi_image_tag: "{{ unifi_latest_version | default(unifi_version) }}"
+
+# system.properties: system_ip, then unifi_properties. (The UNIFI_PROPERTIES
+# in .env.example is only an example.)
+unifi_effective_properties: >-
+  {{ ({'system_ip': unifi_system_ip} if unifi_system_ip else {})
+     | combine(unifi_properties) }}

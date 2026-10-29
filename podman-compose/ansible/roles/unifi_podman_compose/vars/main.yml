@@ -1,0 +1,22 @@
+# Derived from the settings in defaults/main.yml and the host; not meant to be
+# overridden.
+
+# The user's actual IDs and home directory, looked up after it exists.
+unifi_user_uid: "{{ ansible_facts.getent_passwd[unifi_user][1] }}"
+unifi_user_gid: "{{ ansible_facts.getent_passwd[unifi_user][2] }}"
+unifi_home: "{{ ansible_facts.getent_passwd[unifi_user][4] }}"
+
+# The podman-compose setup this role deploys, and the image build context.
+unifi_setup_dir: "{{ role_path }}/../../.."
+unifi_app_dir: "{{ role_path }}/../../../../app"
+unifi_image_build: "{{ unifi_image is match('localhost/') }}"
+# The tag deployed: unifi_version, except that a "latest" that is built is
+# resolved to the release number (see tasks/main.yml), so the deployment
+# changes, and restarts, when a new release is built.
+unifi_image_tag: "{{ unifi_latest_version | default(unifi_version) }}"
+
+# system.properties: system_ip, then unifi_properties. (The UNIFI_PROPERTIES
+# in .env.example is only an example.)
+unifi_effective_properties: >-
+  {{ ({'system_ip': unifi_system_ip} if unifi_system_ip else {})
+     | combine(unifi_properties) }}

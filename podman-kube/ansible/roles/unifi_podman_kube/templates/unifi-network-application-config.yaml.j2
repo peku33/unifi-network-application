@@ -1,0 +1,20 @@
+{#- Derived from podman-kube/unifi-network-application-config.yaml: its values are
+    the defaults, overridden by unifi_env; UNIFI_PROPERTIES is rebuilt from
+    unifi_effective_properties (see vars/main.yml).
+    ConfigMap values must be strings. -#}
+{#- YAML booleans are written as true / false, not Python's True / False. -#}
+{%- macro text(value) -%}{{ (value | string | lower) if value is boolean else value }}{%- endmacro -%}
+{%- set cm = lookup('ansible.builtin.file', unifi_setup_dir ~ '/unifi-network-application-config.yaml') | from_yaml -%}
+{%- set lines = [] -%}
+{%- for key, value in unifi_effective_properties | dictsort -%}
+{%-   set _ = lines.append(key ~ '=' ~ text(value)) -%}
+{%- endfor -%}
+{%- set merged = cm.data | combine(unifi_env) | combine({'UNIFI_PROPERTIES': lines | join('\n') ~ '\n'}) -%}
+{%- set data = {} -%}
+{%- for key, value in merged.items() -%}
+{%-   set _ = data.update({key: text(value) | string}) -%}
+{%- endfor -%}
+{%- set _ = cm.update({'data': data}) -%}
+# {{ ansible_managed }}
+# Generated from podman-kube/unifi-network-application-config.yaml with this host's settings.
+{{ cm | to_nice_yaml(indent=2, sort_keys=false) }}

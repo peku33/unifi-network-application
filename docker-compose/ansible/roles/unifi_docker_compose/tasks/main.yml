@@ -1,0 +1,142 @@
+- name: Check the UniFi Network Application version
+  ansible.builtin.assert:
+    that: unifi_version | string is match('^(latest|[0-9]+\\.[0-9]+\\.[0-9]+)$')
+    fail_msg: "unifi_version ({{ unifi_version }}) must be latest or a version such as 10.6.109."
+    quiet: true
+
+- name: Check that the image name has no tag
+  ansible.builtin.assert:
+    that: unifi_image is not search(':[^/]*$')
+    fail_msg: "unifi_image ({{ unifi_image }}) must have no tag: the tag is unifi_version."
+    quiet: true
+
+# Docker is managed as root (or by a member of the docker group, which is the
+# same).
+- name: Deployment
+  become: true
+  block:
+    - name: Find docker compose
+      ansible.builtin.command: docker compose version --short
+      register: unifi_compose_check
+      changed_when: false
+      failed_when: false
+
+    # docker_compose_v2 needs compose 2.18 or newer.
+    - name: Check docker compose version
+      ansible.builtin.assert:
+        that:
+          - unifi_compose_check.rc == 0
+          - unifi_compose_check.stdout | trim | regex_replace('^v', '') is version('2.18.0', '>=')
+        fail_msg: >-
+          docker with the compose plugin 2.18 or newer is needed
+          (docker compose version: {{ unifi_compose_check.stdout | default('') or unifi_compose_check.stderr | default('not found') }}).
+          Installing it is up to you.
+        quiet: true
+
+    - name: Start docker at boot
+      tags: systemd
+      ansible.builtin.systemd_service:
+        name: docker.service
+        enabled: true
+        state: started
+
+    - name: Install the build script's dependencies
+      when: unifi_image_build
+      ansible.builtin.package:
+        name:
+          - curl
+          - jq
+
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ unifi_dir }}/compose"
+        state: directory
+        mode: "0750"
+
+    # app/ as app/ next to compose/ (no trailing slash: the directory
+    # itself), with its modes as in git: the scripts stay executable.
+    - name: Copy image build context
+      when: unifi_image_build
+      ansible.builtin.copy:
+        src: "{{ unifi_app_dir }}"
+        dest: "{{ unifi_dir }}/"
+        mode: preserve
+      register: unifi_build_ctx
+
+    # A built "latest" is tagged with the release number it resolves to,
+    # so a new release is built once and changes the rendered settings.
+    - name: Look up the latest release
+      when: unifi_image_build and unifi_version == 'latest'
+      ansible.builtin.command: "{{ unifi_dir }}/app/build.sh --no-build"
+      register: unifi_latest_lookup
+      changed_when: false
+
+    - name: Remember the latest release
+      when: unifi_image_build and unifi_version == 'latest'
+      ansible.builtin.set_fact:
+        unifi_latest_version: "{{ unifi_latest_lookup.stdout | regex_search('^UNIFI_VERSION=(.+)$', '\\1', multiline=True) | first }}"
+
+    - name: Check whether this version is already built
+      when: unifi_image_build
+      ansible.builtin.command: docker image inspect --format ok {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_exists
+      changed_when: false
+      failed_when: false
+
+    - name: Build application image
+      when: unifi_image_build and (unifi_image_exists.rc != 0 or unifi_build_ctx.changed)
+      ansible.builtin.command: >-
+        {{ unifi_dir }}/app/build.sh --engine docker
+        --image {{ unifi_image | quote }} {{ unifi_image_tag | quote }}
+        -- {{ unifi_build_extra_args }}
+
+    # A version tag is pulled once, "latest" on every run, to get a newer
+    # release. It counts as changed only when the pull brought a new image,
+    # which then restarts the stack. (A new version tag also changes the
+    # rendered settings.)
+    - name: Look up the application image
+      when: not unifi_image_build
+      ansible.builtin.command: docker image inspect --format '{{ '{{' }}.Id{{ '}}' }}' {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_before
+      changed_when: false
+      failed_when: false
+
+    - name: Pull application image
+      when: not unifi_image_build and (unifi_version == 'latest' or unifi_image_before.rc != 0)
+      ansible.builtin.shell: >-
+        docker pull --quiet {{ unifi_image }}:{{ unifi_image_tag }} > /dev/null &&
+        docker image inspect --format '{{ '{{' }}.Id{{ '}}' }}' {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_pull
+      changed_when: unifi_image_pull.rc == 0 and unifi_image_pull.stdout | trim != unifi_image_before.stdout | trim
+
+    - name: Copy compose file
+      ansible.builtin.copy:
+        src: "{{ unifi_setup_dir }}/compose.yaml"
+        dest: "{{ unifi_dir }}/compose/compose.yaml"
+        mode: "0644"
+
+    # .env sets this exact tag as UNIFI_IMAGE, so a new version is a changed
+    # .env. It may hold credentials (e.g. in db.mongo.uri), hence 0640.
+    - name: Render settings
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ unifi_dir }}/compose/.env"
+        mode: "0640"
+
+    # "docker compose up": pulls MongoDB if missing, creates the volumes on
+    # the first run, and recreates the containers whose configuration or
+    # image changed. A newly pulled or rebuilt image has a new ID, so its
+    # containers are recreated too. data-owner runs again on every "up" by
+    # design (it only re-applies the volume's owner), so that alone doesn't
+    # count as a change.
+    - name: Start the stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ unifi_dir }}/compose"
+        state: present
+        pull: missing
+        remove_orphans: true
+      register: unifi_compose_up
+      changed_when: >-
+        unifi_compose_up.actions
+        | rejectattr('id', 'equalto', 'unifi-network-application-data-owner')
+        | list | length > 0

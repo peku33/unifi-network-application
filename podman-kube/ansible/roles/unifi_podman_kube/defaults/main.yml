@@ -1,0 +1,48 @@
+# Settings of the unifi_podman_kube role; override them in your inventory or
+# where you apply the role.
+
+# The dedicated user that runs the pod (created if missing).
+unifi_user: unifi
+# unifi_uid / unifi_gid: set them to create the user and group with fixed
+# IDs; by default the system picks them (an existing user keeps its own).
+
+# The application version, e.g. 10.6.109, or latest: the newest release,
+# so every run upgrades to it. Set a version to pin it.
+unifi_version: latest
+# The application image, without a tag (the tag is unifi_version): by
+# default the published one, pulled from its registry. A localhost/ image,
+# e.g. localhost/unifi-network-application, is built on the host instead with
+# app/build.sh, which looks up the download's checksum from Ubiquiti.
+unifi_image: ghcr.io/peku33/unifi-network-application
+unifi_build_extra_args: "" # extra "podman build" args, e.g. "--pull=always"
+# MongoDB's image tag: 8 is the newest 8.x release. 4.4.18 for CPUs without
+# AVX (amd64) or older than ARMv8.2-A (arm64); see README.md#cpu-support in
+# the repository root.
+unifi_mongo_version: "8"
+
+# Settings (TZ, JVM_MAX_HEAP, MONGO_CACHE_SIZE_GB, ...), merged over the
+# defaults in podman-kube/unifi-network-application-config.yaml.
+unifi_env: {}
+# system_ip in system.properties: the address devices are told to inform to.
+# Empty: not set.
+unifi_system_ip: "{{ ansible_default_ipv4.address }}"
+# Other system.properties settings, merged over the config's UNIFI_PROPERTIES.
+unifi_properties: {}
+
+# Published ports. The application ports must match unifi.http.port /
+# unifi.https.port (8080 / 8443 in the config).
+unifi_ports:
+  - { port: 8080 } # device inform
+  - { port: 8443 } # UI / API
+  - { port: 3478, protocol: udp } # STUN
+  - { port: 10001, protocol: udp } # device discovery
+# true: use the host's network stack (best for L2 discovery); unifi_ports is
+# then ignored.
+unifi_host_network: false
+
+# true: podman updates the images daily and restarts the pod onto them; see
+# podman-kube/README.md#automatic-updates. With a built image, only MongoDB's.
+unifi_auto_update: false
+
+# Where the image build context goes, when building.
+unifi_dir: "{{ unifi_home }}/unifi-network-application"

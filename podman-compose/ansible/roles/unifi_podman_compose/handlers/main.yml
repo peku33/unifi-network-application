@@ -1,0 +1,11 @@
+- name: Restart unifi-network-application
+  tags: systemd
+  become: true
+  become_user: "{{ unifi_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ unifi_user_uid }}"
+  ansible.builtin.systemd_service:
+    name: unifi-network-application.service
+    scope: user
+    state: restarted
+    daemon_reload: true

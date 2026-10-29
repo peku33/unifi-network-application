@@ -93,3 +93,7 @@ by hand. Each of these was found by testing:
 
 Unlike `podman kube down`, `podman-compose down` stops the containers
 gracefully: MongoDB shuts down cleanly with no extra configuration.
+
+## Ansible
+
+To deploy this setup with Ansible, see [ansible/README.md](ansible/README.md).

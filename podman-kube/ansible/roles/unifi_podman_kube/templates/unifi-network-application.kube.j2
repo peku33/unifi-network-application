@@ -1,0 +1,9 @@
+{#- Derived from podman-kube/unifi-network-application.kube: unchanged, except
+    that unifi_auto_update enables its AutoUpdate line. A built image is left
+    out: the pod runs a version tag of it, which never gets a newer image. -#}
+{%- set kube = lookup('ansible.builtin.file', unifi_setup_dir ~ '/unifi-network-application.kube') -%}
+{%- if unifi_auto_update | bool -%}
+{%-   set kube = kube | replace('#AutoUpdate=registry', 'AutoUpdate=mongodb/registry' if unifi_image_build else 'AutoUpdate=registry') -%}
+{%- endif -%}
+# {{ ansible_managed }}
+{{ kube }}

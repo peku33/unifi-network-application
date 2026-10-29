@@ -1,0 +1,13 @@
+# Deploys the podman-kube setup (../unifi-network-application.yaml, its config
+# and Quadlet unit) with the unifi_podman_kube role, on the hosts in the
+# "unifi" group. See README.md.
+#
+#   ansible-galaxy collection install containers.podman
+#   ansible-playbook -i <inventory> podman-kube/ansible/unifi.yml
+#
+# Set the role's variables (roles/unifi_podman_kube/defaults/main.yml) in host_vars /
+# group_vars.
+- name: UniFi Network Application (rootless podman pod)
+  hosts: unifi
+  roles:
+    - unifi_podman_kube

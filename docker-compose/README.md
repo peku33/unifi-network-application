@@ -65,3 +65,7 @@ recreates the containers whose image changed:
   create beforehand. `docker volume inspect <name>` shows where they are.
 - **MongoDB runs as the image's own `mongodb` user**, as the official image
   does by default.
+
+## Ansible
+
+To deploy this setup with Ansible, see [ansible/README.md](ansible/README.md).

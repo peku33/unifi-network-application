@@ -129,3 +129,7 @@ Quadlet generates. Quadlet only runs `podman kube down`, which removes the pod
 almost immediately and leaves MongoDB uncleanly shut down. The unit stops the
 application first (it stalls on shutdown if MongoDB goes away first), then the
 pod. A full stop takes a few seconds.
+
+## Ansible
+
+To deploy this setup with Ansible, see [ansible/README.md](ansible/README.md).

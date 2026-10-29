@@ -1,3 +1,6 @@
 # Local settings of the compose methods (copied from .env.example)
 podman-compose/.env
 docker-compose/.env
+
+# Ansible
+*.retry

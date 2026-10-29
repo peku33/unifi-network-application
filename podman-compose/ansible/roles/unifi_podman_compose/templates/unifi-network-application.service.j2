@@ -1,0 +1,8 @@
+{#- Derived from podman-compose/unifi-network-application.service: unchanged,
+    except for the directory and podman-compose's path. -#}
+{%- set unit = lookup('ansible.builtin.file', unifi_setup_dir ~ '/unifi-network-application.service') -%}
+{%- set unit = unit
+      | regex_replace('(?m)^WorkingDirectory=.*$', 'WorkingDirectory=' ~ unifi_dir ~ '/compose')
+      | regex_replace('(?m)^(Exec(Start|Stop))=/usr/bin/podman-compose ', '\\1=' ~ unifi_podman_compose ~ ' ') -%}
+# {{ ansible_managed }}
+{{ unit }}

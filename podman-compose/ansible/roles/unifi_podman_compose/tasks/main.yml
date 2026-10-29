@@ -1,0 +1,196 @@
+- name: Check the UniFi Network Application version
+  ansible.builtin.assert:
+    that: unifi_version | string is match('^(latest|[0-9]+\\.[0-9]+\\.[0-9]+)$')
+    fail_msg: "unifi_version ({{ unifi_version }}) must be latest or a version such as 10.6.109."
+    quiet: true
+
+- name: Check that the image name has no tag
+  ansible.builtin.assert:
+    that: unifi_image is not search(':[^/]*$')
+    fail_msg: "unifi_image ({{ unifi_image }}) must have no tag: the tag is unifi_version."
+    quiet: true
+
+- name: Install the build script's dependencies
+  when: unifi_image_build
+  become: true
+  ansible.builtin.package:
+    name:
+      - curl
+      - jq
+
+- name: Create group
+  become: true
+  ansible.builtin.group:
+    name: "{{ unifi_user }}"
+    gid: "{{ unifi_gid | default(omit) }}"
+
+# An existing user keeps its home directory; a new one gets /home/<user>.
+- name: Create user
+  become: true
+  ansible.builtin.user:
+    name: "{{ unifi_user }}"
+    uid: "{{ unifi_uid | default(omit) }}"
+    group: "{{ unifi_user }}"
+    shell: /usr/sbin/nologin
+    create_home: true
+
+- name: Look up the user's IDs and home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ unifi_user }}"
+
+# useradd gives a new regular user a range (see SUB_UID_COUNT in
+# /etc/login.defs); an existing user may have none.
+- name: Look up the user's sub-UID/GID ranges
+  ansible.builtin.shell: >-
+    grep -Eq '^({{ unifi_user }}|{{ unifi_user_uid }}):' /etc/subuid &&
+    grep -Eq '^({{ unifi_user }}|{{ unifi_user_gid }}):' /etc/subgid
+  register: unifi_subids
+  changed_when: false
+  failed_when: false
+
+- name: Check that the user has sub-UID/GID ranges for rootless podman
+  ansible.builtin.assert:
+    that: unifi_subids.rc == 0
+    fail_msg: >-
+      {{ unifi_user }} has no range in /etc/subuid and /etc/subgid, which
+      rootless podman needs. Add one, e.g. with
+      usermod --add-subuids <first>-<last> --add-subgids <first>-<last> {{ unifi_user }}
+      using a range no other user has.
+    quiet: true
+
+- name: Let the user's services run without a login session
+  tags: systemd
+  become: true
+  ansible.builtin.command: loginctl enable-linger {{ unifi_user }}
+  args:
+    creates: "/var/lib/systemd/linger/{{ unifi_user }}"
+
+- name: Rootless deployment
+  become: true
+  become_user: "{{ unifi_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ unifi_user_uid }}"
+  block:
+    - name: Find podman-compose
+      ansible.builtin.shell: >-
+        {{ (unifi_podman_compose or 'podman-compose') | quote }} --version &&
+        command -v {{ (unifi_podman_compose or 'podman-compose') | quote }}
+      register: unifi_podman_compose_check
+      changed_when: false
+
+    - name: Check podman-compose version
+      vars:
+        version: "{{ unifi_podman_compose_check.stdout | regex_search('podman-compose version ([0-9.]+)', '\\1') | first }}"
+      ansible.builtin.assert:
+        that: version is version('1.1.0', '>=')
+        fail_msg: "podman-compose {{ version }} is too old: 1.1.0 or newer is needed (tested with 1.6.0)."
+        quiet: true
+
+    - name: Remember podman-compose's path
+      ansible.builtin.set_fact:
+        unifi_podman_compose: "{{ unifi_podman_compose_check.stdout_lines | last }}"
+
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ unifi_dir }}/compose"
+        - "{{ unifi_home }}/.config/systemd/user"
+
+    # app/ as app/ next to compose/ (no trailing slash: the directory
+    # itself), with its modes as in git: the scripts stay executable.
+    - name: Copy image build context
+      when: unifi_image_build
+      ansible.builtin.copy:
+        src: "{{ unifi_app_dir }}"
+        dest: "{{ unifi_dir }}/"
+        mode: preserve
+      register: unifi_build_ctx
+
+    # A built "latest" is tagged with the release number it resolves to,
+    # so a new release is built once and changes the rendered settings.
+    - name: Look up the latest release
+      when: unifi_image_build and unifi_version == 'latest'
+      ansible.builtin.command: "{{ unifi_dir }}/app/build.sh --no-build"
+      register: unifi_latest_lookup
+      changed_when: false
+
+    - name: Remember the latest release
+      when: unifi_image_build and unifi_version == 'latest'
+      ansible.builtin.set_fact:
+        unifi_latest_version: "{{ unifi_latest_lookup.stdout | regex_search('^UNIFI_VERSION=(.+)$', '\\1', multiline=True) | first }}"
+
+    - name: Check whether this version is already built
+      when: unifi_image_build
+      ansible.builtin.command: podman image exists {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_exists
+      changed_when: false
+      failed_when: unifi_image_exists.rc not in [0, 1]
+
+    - name: Build application image
+      when: unifi_image_build and (unifi_image_exists.rc != 0 or unifi_build_ctx.changed)
+      ansible.builtin.command: >-
+        {{ unifi_dir }}/app/build.sh --image {{ unifi_image | quote }} {{ unifi_image_tag | quote }}
+        -- {{ unifi_build_extra_args }}
+      notify: Restart unifi-network-application
+
+    # A version tag is pulled once, "latest" on every run, to get a newer
+    # release. It counts as changed only when the pull brought a new image,
+    # which then restarts the stack. (A new version tag also changes the
+    # rendered settings.)
+    - name: Look up the application image
+      when: not unifi_image_build
+      ansible.builtin.command: podman image inspect --format '{{ '{{' }}.Id{{ '}}' }}' {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_before
+      changed_when: false
+      failed_when: false
+
+    - name: Pull application image
+      when: not unifi_image_build and (unifi_version == 'latest' or unifi_image_before.rc != 0)
+      ansible.builtin.command: podman pull --quiet {{ unifi_image }}:{{ unifi_image_tag }}
+      register: unifi_image_pull
+      changed_when: unifi_image_pull.rc == 0 and unifi_image_pull.stdout | trim != unifi_image_before.stdout | trim
+      notify: Restart unifi-network-application
+
+    # Created explicitly (compose.yaml declares them external), so they are
+    # browsable by the user on the host.
+    - name: Create data volumes
+      containers.podman.podman_volume:
+        name: "{{ item }}"
+      loop:
+        - unifi-network-application-data
+        - unifi-network-application-mongodb
+
+    - name: Copy compose file
+      ansible.builtin.copy:
+        src: "{{ unifi_setup_dir }}/compose.yaml"
+        dest: "{{ unifi_dir }}/compose/compose.yaml"
+        mode: "0644"
+      notify: Restart unifi-network-application
+
+    # It may hold credentials (e.g. in db.mongo.uri), hence 0640.
+    - name: Render settings
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ unifi_dir }}/compose/.env"
+        mode: "0640"
+      notify: Restart unifi-network-application
+
+    - name: Install systemd user unit
+      ansible.builtin.template:
+        src: unifi-network-application.service.j2
+        dest: "{{ unifi_home }}/.config/systemd/user/unifi-network-application.service"
+        mode: "0644"
+      notify: Restart unifi-network-application
+
+    - name: Enable and start the stack
+      tags: systemd
+      ansible.builtin.systemd_service:
+        name: unifi-network-application.service
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true

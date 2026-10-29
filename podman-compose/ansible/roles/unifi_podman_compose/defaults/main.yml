@@ -1,0 +1,36 @@
+# Settings of the unifi_podman_compose role; override them in your inventory
+# or where you apply the role.
+
+# The dedicated user that runs the stack (created if missing).
+unifi_user: unifi
+# unifi_uid / unifi_gid: set them to create the user and group with fixed
+# IDs; by default the system picks them (an existing user keeps its own).
+
+# The application version, e.g. 10.6.109, or latest: the newest release,
+# so every run upgrades to it. Set a version to pin it.
+unifi_version: latest
+# The application image, without a tag (the tag is unifi_version): by
+# default the published one, pulled from its registry. A localhost/ image,
+# e.g. localhost/unifi-network-application, is built on the host instead with
+# app/build.sh, which looks up the download's checksum from Ubiquiti.
+unifi_image: ghcr.io/peku33/unifi-network-application
+unifi_build_extra_args: "" # extra "podman build" args, e.g. "--pull=always"
+# MongoDB's image tag: 8 is the newest 8.x release. 4.4.18 for CPUs without
+# AVX (amd64) or older than ARMv8.2-A (arm64); see README.md#cpu-support in
+# the repository root.
+unifi_mongo_version: "8"
+
+# .env settings (TZ, UNIFI_HTTP_PORT, ...), merged over the defaults in
+# podman-compose/.env.example. The application ports are published under the
+# same numbers.
+unifi_env: {}
+# system_ip in system.properties: the address devices are told to inform to.
+# Empty: not set.
+unifi_system_ip: "{{ ansible_default_ipv4.address }}"
+# Other system.properties settings (UNIFI_PROPERTIES in .env).
+unifi_properties: {}
+
+# Path of podman-compose on the host; found on PATH when empty.
+unifi_podman_compose: ""
+# Where compose/ (compose.yaml, .env) and, when building, app/ go.
+unifi_dir: "{{ unifi_home }}/unifi-network-application"

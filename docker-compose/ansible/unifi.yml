@@ -1,0 +1,12 @@
+# Deploys the docker-compose setup (../compose.yaml) with the
+# unifi_docker_compose role, on the hosts in the "unifi" group. See README.md.
+#
+#   ansible-galaxy collection install community.docker
+#   ansible-playbook -i <inventory> docker-compose/ansible/unifi.yml
+#
+# Set the role's variables (roles/unifi_docker_compose/defaults/main.yml) in host_vars /
+# group_vars.
+- name: UniFi Network Application (docker compose)
+  hosts: unifi
+  roles:
+    - unifi_docker_compose

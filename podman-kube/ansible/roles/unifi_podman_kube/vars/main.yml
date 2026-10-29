@@ -1,0 +1,33 @@
+# Derived from the settings in defaults/main.yml and the host; not meant to be
+# overridden.
+
+# The user's actual IDs and home directory, looked up after it exists.
+unifi_user_uid: "{{ ansible_facts.getent_passwd[unifi_user][1] }}"
+unifi_user_gid: "{{ ansible_facts.getent_passwd[unifi_user][2] }}"
+unifi_home: "{{ ansible_facts.getent_passwd[unifi_user][4] }}"
+unifi_quadlet_dir: "{{ unifi_home }}/.config/containers/systemd"
+
+# The podman-kube setup this role deploys, and the image build context.
+unifi_setup_dir: "{{ role_path }}/../../.."
+unifi_app_dir: "{{ role_path }}/../../../../app"
+unifi_image_build: "{{ unifi_image is match('localhost/') }}"
+# The tag deployed: unifi_version, except that a "latest" that is built is
+# resolved to the release number (see tasks/main.yml), so the deployment
+# changes, and restarts, when a new release is built.
+unifi_image_tag: "{{ unifi_latest_version | default(unifi_version) }}"
+
+# system.properties: the UNIFI_PROPERTIES defaults from the config, then
+# system_ip, then unifi_properties.
+unifi_default_properties: >-
+  {%- set defaults = {} -%}
+  {%- set config = lookup('ansible.builtin.file', unifi_setup_dir ~ '/unifi-network-application-config.yaml') | from_yaml -%}
+  {%- for line in config.data.UNIFI_PROPERTIES.splitlines() | map('trim') -%}
+  {%-   if line and not line.startswith('#') and '=' in line -%}
+  {%-     set _ = defaults.update({line.split('=', 1)[0]: line.split('=', 1)[1]}) -%}
+  {%-   endif -%}
+  {%- endfor -%}
+  {{ defaults | to_json }}
+unifi_effective_properties: >-
+  {{ unifi_default_properties | from_json
+     | combine({'system_ip': unifi_system_ip} if unifi_system_ip else {})
+     | combine(unifi_properties) }}

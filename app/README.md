@@ -63,7 +63,8 @@ podman build --build-arg UNIFI_VERSION=<version> [--build-arg UNIFI_SHA256=<sha2
 
 ## Publishing
 
-The workflow [`.github/workflows/image.yml`](../.github/workflows/image.yml)
+The workflow
+[`.github/workflows/app-build-and-publish.yml`](../.github/workflows/app-build-and-publish.yml)
 publishes `ghcr.io/peku33/unifi-network-application` for amd64 and arm64,
 each built on a native runner, as `:<version>` and `:latest`. It runs:
 
@@ -80,9 +81,10 @@ image with it (`org.opencontainers.image.base.name` / `.base.digest`) and
 with the commit it was built from (`.revision`).
 
 After each publish, the workflow writes `published.env` and commits it to
-`main` as `github-actions[bot]`, e.g. "chore: publish image 10.6.110 (new
-release)". The commit is the record of the publish, and doesn't start the
-workflow again. Pull before you push, as `main` may have moved.
+`main` as `github-actions[bot]`, e.g. "chore: publish image 10.6.110". The
+commit is the record of the publish: its diff shows what changed, and it
+links to the workflow run. It doesn't start the workflow again. Pull before
+you push, as `main` may have moved.
 
 Only the newest version is rebuilt: an older version tag stays on the base
 image it was built with.

@@ -6,9 +6,9 @@
 #   - daily: publishes if the latest UniFi release or the base image (FROM in
 #     app/Containerfile) differs from what app/published.env records
 #   - a push to main that changes app/ or this workflow: publishes
-#   - by hand (Actions > Image > Run workflow, on main): publishes
-#   - a pull request: builds both architectures, publishes nothing
-name: Image
+#   - by hand (Actions > App build and publish > Run workflow, on main): publishes
+#   - a pull request: builds all architectures, publishes nothing
+name: App build and publish
 
 on:
   schedule:
@@ -18,7 +18,7 @@ on:
     paths: &paths
       - app/**
       - "!app/published.env"
-      - .github/workflows/image.yml
+      - .github/workflows/app-build-and-publish.yml
   pull_request:
     paths: *paths
   workflow_dispatch:
@@ -29,7 +29,7 @@ permissions:
 # One publishing run at a time, queued; a pull request's newer run replaces
 # its older one.
 concurrency:
-  group: image-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  group: app-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -43,7 +43,6 @@ jobs:
     outputs:
       build: ${{ steps.decide.outputs.build }}
       push: ${{ steps.decide.outputs.push }}
-      reason: ${{ steps.decide.outputs.reason }}
       created: ${{ steps.decide.outputs.created }}
       unifi-version: ${{ steps.unifi.outputs.UNIFI_VERSION }}
       unifi-sha256: ${{ steps.unifi.outputs.UNIFI_SHA256 }}
@@ -89,62 +88,50 @@ jobs:
               [ "$published" = "${!key}" ] || changed+=("$key")
           done
 
+          # A pull request only builds; the daily run only when something
+          # changed; a manual run publishes only from main (it can be started
+          # on any branch).
           build=true
           push=true
           case $EVENT in
-              pull_request)
-                  push=false
-                  reason="pull request" ;;
-              schedule)
-                  if [ ${#changed[@]} -eq 0 ]; then
-                      build=false
-                      push=false
-                      reason="already published"
-                  elif [[ " ${changed[*]} " == *" UNIFI_VERSION "* ]]; then
-                      reason="new release"
-                  elif [[ " ${changed[*]} " == *" UNIFI_SHA256 "* ]]; then
-                      reason="new download checksum"
-                  else
-                      reason="base image update"
-                  fi ;;
-              push)
-                  reason="image changes" ;;
-              *)
-                  reason="manual run" ;;
+              pull_request) push=false ;;
+              schedule) if [ ${#changed[@]} -eq 0 ]; then build=false push=false; fi ;;
           esac
-          # A manual run can be started on any branch: publish only from main.
           if [ "$REF" != refs/heads/main ]; then push=false; fi
 
           {
               echo "build=$build"
               echo "push=$push"
-              echo "reason=$reason"
-              # One build time for both architectures.
+              # One build time for all architectures.
               echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
           {
               echo "UniFi Network Application $UNIFI_VERSION on $BASE_IMAGE@$BASE_IMAGE_DIGEST"
               echo
-              echo "Changed since the last publish: ${changed[*]:-nothing}. Build: $build, publish: $push ($reason)."
+              echo "Changed since the last publish: ${changed[*]:-nothing}. Build: $build, publish: $push."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Each architecture on its own native runner; the two jobs differ only in
-  # the runner and PLATFORM. With publishing, the image is pushed without a
-  # tag, by digest only; the publish job then tags both.
-  build-amd64:
-    name: Build (amd64)
+  # One job per architecture, each on a native runner. With publishing, each
+  # pushes its image without a tag, by digest only, and leaves the digest for
+  # the publish job as an artifact (a matrix job has one set of outputs, which
+  # the last job to finish would overwrite).
+  build:
+    name: Build (${{ matrix.arch }})
     needs: check
     if: needs.check.outputs.build == 'true'
-    runs-on: ubuntu-26.04
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    permissions: &build-permissions
+    permissions:
       contents: read
       packages: write
-    env:
-      PLATFORM: linux/amd64
-    outputs: &build-outputs
-      digest: ${{ steps.build.outputs.digest }}
-    steps: &build-steps
+    steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
@@ -165,7 +152,7 @@ jobs:
         with:
           context: app
           file: app/Containerfile
-          platforms: ${{ env.PLATFORM }}
+          platforms: linux/${{ matrix.arch }}
           build-args: |
             UNIFI_VERSION=${{ needs.check.outputs.unifi-version }}
             UNIFI_SHA256=${{ needs.check.outputs.unifi-sha256 }}
@@ -178,23 +165,28 @@ jobs:
             org.opencontainers.image.base.digest=${{ needs.check.outputs.base-image-digest }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ needs.check.outputs.push }}
 
-  build-arm64:
-    name: Build (arm64)
-    needs: check
-    if: needs.check.outputs.build == 'true'
-    runs-on: ubuntu-26.04-arm
-    timeout-minutes: 30
-    permissions: *build-permissions
-    env:
-      PLATFORM: linux/arm64
-    outputs: *build-outputs
-    steps: *build-steps
+      # An empty file named after the digest, in an artifact per architecture.
+      - name: Save the digest
+        if: needs.check.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
 
-  # Tags both architectures' images as one :<version> and :latest, then
-  # records the publish.
+      - if: needs.check.outputs.push == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Tags the images of all architectures the build jobs pushed as one :<version>
+  # and :latest, then records the publish.
   publish:
     name: Publish
-    needs: [check, build-amd64, build-arm64]
+    needs: [check, build]
     if: needs.check.outputs.push == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -206,11 +198,15 @@ jobs:
       UNIFI_SHA256: ${{ needs.check.outputs.unifi-sha256 }}
       BASE_IMAGE: ${{ needs.check.outputs.base-image }}
       BASE_IMAGE_DIGEST: ${{ needs.check.outputs.base-image-digest }}
-      REASON: ${{ needs.check.outputs.reason }}
-      AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
-      ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
+
+      # Every build job's digest file, into one directory.
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v4
 
@@ -221,37 +217,42 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ghcr.io shows a multi-arch image's description and repository from
-      # annotations on the index: copy them from the image's labels.
+      # annotations on the index: copy them from the images' labels (the
+      # same on all architectures).
       - name: Tag the image
         id: tag
+        working-directory: ${{ runner.temp }}/digests
         run: |
-          labels=$(docker buildx imagetools inspect "$IMAGE@$AMD64_DIGEST" --format '{{json .Image}}' | jq -c .config.Labels)
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          labels=$(docker buildx imagetools inspect "${sources[0]}" --format '{{json .Image}}' | jq -c .config.Labels)
           annotations=()
           for key in org.opencontainers.image.source org.opencontainers.image.description org.opencontainers.image.version; do
               annotations+=(--annotation "index:$key=$(jq -r --arg key "$key" '.[$key]' <<< "$labels")")
           done
           docker buildx imagetools create \
-              --tag "$IMAGE:$UNIFI_VERSION" --tag "$IMAGE:latest" "${annotations[@]}" \
-              "$IMAGE@$AMD64_DIGEST" "$IMAGE@$ARM64_DIGEST"
+              --tag "$IMAGE:$UNIFI_VERSION" --tag "$IMAGE:latest" "${annotations[@]}" "${sources[@]}"
           digest=$(docker buildx imagetools inspect "$IMAGE:$UNIFI_VERSION" --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           {
-              echo "Published $IMAGE:$UNIFI_VERSION and :latest ($REASON)"
+              echo "Published $IMAGE:$UNIFI_VERSION and :latest"
               echo
               echo "$IMAGE@$digest"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The commit doesn't start another run: pushes made with GITHUB_TOKEN
-      # don't trigger workflows (and the push trigger ignores this file).
+      # don't trigger workflows (and the push trigger ignores this file). What
+      # triggered the publish is in the run it links to.
       - name: Record the publish
         env:
           IMAGE_DIGEST: ${{ steps.tag.outputs.digest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cat > app/published.env <<EOF
-          # The image .github/workflows/image.yml published last, and what it
-          # was built from. Written by the workflow after each publish; its
-          # daily run publishes again when the latest release or base image
-          # differs from the values here.
+          # The image .github/workflows/app-build-and-publish.yml published
+          # last, and what it was built from. Written by the workflow after
+          # each publish; its daily run publishes again when the latest
+          # release or base image differs from the values here.
           UNIFI_VERSION=$UNIFI_VERSION
           UNIFI_SHA256=$UNIFI_SHA256
           BASE_IMAGE=$BASE_IMAGE
@@ -262,8 +263,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
           git add app/published.env
-          git commit --quiet -m "chore: publish image $UNIFI_VERSION ($REASON)" -m "$IMAGE:$UNIFI_VERSION and :latest
+          git commit --quiet -m "chore: publish image $UNIFI_VERSION" -m "$IMAGE:$UNIFI_VERSION and :latest
           $IMAGE@$IMAGE_DIGEST
-          Built from $BASE_IMAGE@$BASE_IMAGE_DIGEST"
+          Built from $BASE_IMAGE@$BASE_IMAGE_DIGEST
+          Run: $RUN_URL"
           git pull --quiet --rebase origin main
           git push origin HEAD:main

@@ -24,6 +24,25 @@
       must be in unifi_ports ({{ published }}).
     quiet: true
 
+- name: Install podman
+  become: true
+  ansible.builtin.package:
+    name: podman
+
+- name: Look up the podman version
+  ansible.builtin.command: podman --version
+  register: unifi_podman_check
+  changed_when: false
+
+# Quadlet runs .kube units from 4.4 on.
+- name: Check podman version
+  vars:
+    version: "{{ unifi_podman_check.stdout | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1') | first }}"
+  ansible.builtin.assert:
+    that: version is version('4.4.0', '>=')
+    fail_msg: "podman {{ version }} is too old: 4.4 or newer is needed (Quadlet .kube support)."
+    quiet: true
+
 - name: Install the build script's dependencies
   when: unifi_image_build
   become: true

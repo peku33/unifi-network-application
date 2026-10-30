@@ -10,6 +10,11 @@
     fail_msg: "unifi_image ({{ unifi_image }}) must have no tag: the tag is unifi_version."
     quiet: true
 
+- name: Install podman
+  become: true
+  ansible.builtin.package:
+    name: podman
+
 - name: Install the build script's dependencies
   when: unifi_image_build
   become: true
@@ -78,6 +83,17 @@
         command -v {{ (unifi_podman_compose or 'podman-compose') | quote }}
       register: unifi_podman_compose_check
       changed_when: false
+      failed_when: false
+
+    # Not installed by the role: distributions often ship an older one.
+    - name: Check that podman-compose is installed
+      ansible.builtin.assert:
+        that: unifi_podman_compose_check.rc == 0
+        fail_msg: >-
+          podman-compose ({{ unifi_podman_compose or 'podman-compose' }}) was not
+          found for {{ unifi_user }}: install 1.1.0 or newer (a distribution
+          package or pip), or set unifi_podman_compose to its path.
+        quiet: true
 
     - name: Check podman-compose version
       vars:

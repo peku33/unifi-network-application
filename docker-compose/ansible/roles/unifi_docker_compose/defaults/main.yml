@@ -21,7 +21,7 @@ unifi_mongo_version: "8"
 unifi_env: {}
 # system_ip in system.properties: the address devices are told to inform to.
 # Empty: not set.
-unifi_system_ip: "{{ ansible_default_ipv4.address }}"
+unifi_system_ip: "{{ ansible_facts.default_ipv4.address }}"
 # Other system.properties settings (UNIFI_PROPERTIES in .env).
 unifi_properties: {}
 

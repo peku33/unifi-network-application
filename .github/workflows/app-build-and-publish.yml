@@ -165,20 +165,19 @@ jobs:
             org.opencontainers.image.base.digest=${{ needs.check.outputs.base-image-digest }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ needs.check.outputs.push }}
 
-      # An empty file named after the digest, in an artifact per architecture.
+      # The digest, in a file and an artifact digest-<arch>.
       - name: Save the digest
         if: needs.check.outputs.push == 'true'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+          ARCH: ${{ matrix.arch }}
+        run: echo "$DIGEST" > "$RUNNER_TEMP/digest-$ARCH"
 
       - if: needs.check.outputs.push == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: digest-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
+          path: ${{ runner.temp }}/digest-${{ matrix.arch }}
           if-no-files-found: error
           retention-days: 1
 
@@ -201,7 +200,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Every build job's digest file, into one directory.
+      # Every build job's digest-<arch> file, into one directory.
       - uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests
@@ -224,7 +223,14 @@ jobs:
         working-directory: ${{ runner.temp }}/digests
         run: |
           sources=()
-          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          for file in digest-*; do
+              digest=$(< "$file")
+              if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                  echo "::error::$file holds no digest: $digest"
+                  exit 1
+              fi
+              sources+=("$IMAGE@$digest")
+          done
           labels=$(docker buildx imagetools inspect "${sources[0]}" --format '{{json .Image}}' | jq -c .config.Labels)
           annotations=()
           for key in org.opencontainers.image.source org.opencontainers.image.description org.opencontainers.image.version; do

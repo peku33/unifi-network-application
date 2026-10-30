@@ -15,6 +15,25 @@
   ansible.builtin.package:
     name: podman
 
+# Debian and Ubuntu only recommend parts rootless podman needs (newuidmap,
+# pasta, catatonit, ...), so hosts that don't install recommends lack them,
+# also when podman was installed before. Satisfy the installed podman's
+# Recommends.
+- name: Look up podman's recommended packages
+  when: ansible_facts.os_family == 'Debian'
+  ansible.builtin.command: dpkg-query --show --showformat '${Recommends}' podman
+  register: unifi_podman_recommends
+  changed_when: false
+
+- name: Install podman's recommended packages
+  when: ansible_facts.os_family == 'Debian' and unifi_podman_recommends.stdout | trim | length > 0
+  become: true
+  ansible.builtin.command: apt-get satisfy --yes {{ unifi_podman_recommends.stdout | quote }}
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: unifi_podman_recommends_install
+  changed_when: unifi_podman_recommends_install.stdout is not search('^0 upgraded, 0 newly installed', multiline=True)
+
 - name: Install the build script's dependencies
   when: unifi_image_build
   become: true

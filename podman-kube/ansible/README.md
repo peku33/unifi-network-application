@@ -97,7 +97,9 @@ The role stops before changing anything if `unifi_version` is neither
 
 ## What it does
 
-- installs podman from the distribution and checks that it's 4.4 or newer
+- installs podman from the distribution, with its recommended packages (on
+  Debian and Ubuntu, rootless podman needs some of them), and checks that
+  it's 4.4 or newer
 - creates the user and lets its services run without a login session.
   Rootless podman needs a sub-UID/GID range for it, which `useradd` gives a
   new user; for an existing user without one, the role stops and says how to

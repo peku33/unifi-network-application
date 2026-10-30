@@ -16,6 +16,10 @@ is never published, and the application runs as a non-root user.
 
 ## Usage
 
+Run this in a checkout of this repository, or in any directory with just
+`compose.yaml` and `.env.example` downloaded into it (see the
+[quick start](../README.md#with-docker-compose)).
+
 ```sh
 cp .env.example .env
 $EDITOR .env                     # system_ip in UNIFI_PROPERTIES, ...

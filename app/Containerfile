@@ -58,6 +58,8 @@ COPY --chmod=0755 bin/ /usr/local/bin/
 ENV HOME=/tmp \
     UNIFI_VERSION=${UNIFI_VERSION}
 LABEL org.opencontainers.image.title="UniFi Network Application" \
+      org.opencontainers.image.description="The standalone UniFi Network Application for podman and docker with an external MongoDB" \
+      org.opencontainers.image.source="https://github.com/peku33/unifi-network-application" \
       org.opencontainers.image.version=${UNIFI_VERSION}
 
 WORKDIR /usr/lib/unifi

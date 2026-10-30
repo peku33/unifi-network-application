@@ -21,7 +21,9 @@ apply to all of them. Use one method per host: they publish the same ports.
 All methods run the published image
 `ghcr.io/peku33/unifi-network-application` (amd64 and arm64), tagged with the
 application's version, e.g. `:10.6.109`, and `:latest`. It is pulled on the
-first start. `:latest` is the default; a version tag pins the version.
+first start. `:latest` is the default; a version tag pins the version. A
+daily build publishes each new release, and rebuilds the latest one when its
+base image gets updates (see [Publishing](app/README.md#publishing)).
 
 To build the image yourself instead, on the machine that runs it (needs
 `curl`, `jq`, and podman or docker):

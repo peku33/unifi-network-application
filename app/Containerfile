@@ -1,4 +1,4 @@
-# UniFi Network Application (standalone "unix" build) on Temurin 25.
+# UniFi Network Application (standalone "unix" build) on Temurin 25 (Ubuntu 26.04).
 # Multi-arch: works for linux/amd64 and linux/arm64 (the zip ships native libs for both).
 #
 # Usually built through ./build.sh, which looks up the version and checksum.
@@ -11,7 +11,7 @@
 #   UNIFI_VERSION  required, e.g. 10.6.109
 #   UNIFI_SHA256   optional: SHA-256 of UniFi.unix.zip. Without it the download
 #                  is not verified (the build prints a warning).
-FROM docker.io/library/eclipse-temurin:25-jre-noble
+FROM docker.io/library/eclipse-temurin:25-jre-resolute
 
 ARG UNIFI_VERSION
 ARG UNIFI_SHA256

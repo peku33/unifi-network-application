@@ -89,6 +89,22 @@ you push, as `main` may have moved.
 Only the newest version is rebuilt: an older version tag stays on the base
 image it was built with.
 
+## Dependency updates
+
+[Renovate](https://docs.renovatebot.com), configured in
+[`.github/renovate.json5`](../.github/renovate.json5), opens a pull request
+when a pinned version of the build has a newer release: the base image's tag
+(the `FROM` of the Containerfile), the actions the workflows use, and their
+runner images (`ubuntu-XX.04`). The pull request runs the build, and merging
+it publishes the image. A new Temurin major waits for approval on the
+Dependency Dashboard issue, as only LTS releases are wanted.
+
+Two things are left to do by hand: moving the base image to the next Ubuntu
+release (its codename is part of the tag, e.g. `resolute`), and the comments
+and docs that name the versions (e.g. "Temurin 25 (Ubuntu 26.04)"), which an
+update pull request doesn't change. The base image's digest needs no pull
+request: the daily run follows it (see [Publishing](#publishing)).
+
 ## What the image expects
 
 - to run as a non-root UID/GID (it needs no passwd entry)

@@ -20,7 +20,10 @@ run as your own user, so the data volumes stay owned by you.
 ## Install
 
 Run all of this as the user that should own the UniFi Network Application.
-Root is needed only for `loginctl`.
+Root is needed only for `loginctl`. Instead of a checkout of this repository,
+you can also download the three files straight into
+`~/.config/containers/systemd/` and edit them there (see the
+[quick start](../README.md#with-podman-rootless-as-a-systemd-service)).
 
 ```sh
 # 1. Configure: at least uncomment system_ip and set it to the host's LAN address

@@ -1,9 +1,9 @@
 # UniFi Network Application in containers
 
 **An always-fresh UniFi Network Application with its MongoDB, in one
-ready-to-run bundle.** Clone, set one line, start: the self-hosted controller
-for your UniFi access points, switches and gateways runs on your own Linux
-machine with docker or podman, on amd64 or arm64.
+ready-to-run bundle.** Download a few files, set one line, start: the
+self-hosted controller for your UniFi access points, switches and gateways
+runs on your own Linux machine with docker or podman, on amd64 or arm64.
 
 - **Always up to date.** The image
   `ghcr.io/peku33/unifi-network-application` is rebuilt automatically every
@@ -14,8 +14,11 @@ machine with docker or podman, on amd64 or arm64.
   [docker compose](docker-compose/README.md) stack or a
   [podman kube](podman-kube/README.md) pod. No database to install, no Java to
   manage, nothing else to wire together.
-- **Easy to run.** One settings file, sensible defaults, and the stack starts
-  again by itself at boot.
+- **Easy to run.** Download a few files, set one line, start. One settings
+  file, sensible defaults, and the stack starts again by itself at boot.
+- **Ready for Ansible.** Each setup comes with an Ansible role that deploys
+  it on one or many machines, and upgrades it to the newest release on
+  every run.
 - **Safe by default.** The application runs as a non-root user (rootless with
   podman), and MongoDB is never reachable from outside the bundle.
 - **Your data stays put.** Settings, statistics and backups live in volumes
@@ -24,22 +27,23 @@ machine with docker or podman, on amd64 or arm64.
 ## Quick start
 
 You need a 64-bit Linux machine on the same network as your UniFi devices,
-with git and either docker (with `docker compose`) or podman 4.4 or newer.
-Find the machine's LAN address first, e.g. with `hostname -I`: your devices
-will be told to talk to the application there.
+with either docker (with `docker compose`) or podman 4.4 or newer. There is
+nothing to clone or build: you download two or three small files, and the
+images come from the registry. Find the machine's LAN address first, e.g.
+with `hostname -I`: your devices will be told to talk to the application
+there.
 
 ### With docker compose
 
+Download the compose file and the settings into a new directory:
+
 ```bash
-git clone https://github.com/peku33/unifi-network-application.git
+mkdir unifi-network-application && cd unifi-network-application
 ```
 
 ```bash
-cd unifi-network-application/docker-compose
-```
-
-```bash
-cp .env.example .env
+curl -fsSLO https://raw.githubusercontent.com/peku33/unifi-network-application/main/docker-compose/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/peku33/unifi-network-application/main/docker-compose/.env.example
 ```
 
 Open `.env` and set your machine's LAN address in the `UNIFI_PROPERTIES`
@@ -56,29 +60,26 @@ e.g. after a reboot, until you stop it with `docker compose down`. More in
 
 ### With podman (rootless, as a systemd service)
 
-Run this as your regular user, not root:
+Run this as your regular user, not root. Download the pod, its settings and
+its systemd unit to where systemd looks for them:
 
 ```bash
-git clone https://github.com/peku33/unifi-network-application.git
+mkdir -p ~/.config/containers/systemd && cd ~/.config/containers/systemd
 ```
 
 ```bash
-cd unifi-network-application/podman-kube
+for f in unifi-network-application.yaml unifi-network-application-config.yaml unifi-network-application.kube; do
+  curl -fsSLO "https://raw.githubusercontent.com/peku33/unifi-network-application/main/podman-kube/$f"
+done
 ```
 
 Open `unifi-network-application-config.yaml`, uncomment the `system_ip` line
 and set your machine's LAN address, e.g. `system_ip=192.168.1.10`. Optionally
-set `TZ` to your time zone. Then install and start it:
+set `TZ` to your time zone. Then create the data volumes and start it:
 
 ```bash
 podman volume create unifi-network-application-data
 podman volume create unifi-network-application-mongodb
-```
-
-```bash
-mkdir -p ~/.config/containers/systemd
-cp unifi-network-application.yaml unifi-network-application-config.yaml \
-   unifi-network-application.kube ~/.config/containers/systemd/
 ```
 
 ```bash
@@ -96,6 +97,39 @@ To let it update itself every day, see
 [Automatic updates](podman-kube/README.md#automatic-updates). More in
 [podman-kube/README.md](podman-kube/README.md).
 
+### With Ansible
+
+To set up one or many machines from your own computer, use the Ansible role
+that comes with each setup. It installs the files, creates the volumes (and,
+for podman, a dedicated `unifi` user), sets `system_ip` to the host's address
+by itself, and starts the application. Running it again upgrades to the
+newest release. On the machine you run Ansible from (with the `ansible`
+package, which includes the collections the roles use):
+
+```bash
+git clone https://github.com/peku33/unifi-network-application.git
+```
+
+List the target machines in an inventory file, e.g. `inventory.ini`:
+
+```ini
+[unifi]
+controller.example.com
+```
+
+Then run the playbook of the setup you want, e.g. podman kube:
+
+```bash
+ansible-playbook -i inventory.ini unifi-network-application/podman-kube/ansible/unifi.yml
+```
+
+The targets need podman (or docker for `docker-compose/ansible/unifi.yml`)
+already installed. The settings, such as the time zone or automatic updates,
+go in your inventory's host or group variables. All of them:
+[podman-kube](podman-kube/ansible/README.md),
+[podman-compose](podman-compose/ansible/README.md),
+[docker-compose](docker-compose/ansible/README.md).
+
 ### Then
 
 1. Open `https://<your machine's address>:8443` in a browser. The first start
@@ -106,41 +140,6 @@ To let it update itself every day, see
 3. Adopt your devices. Those on the same LAN usually show up by themselves;
    otherwise see [Ports](#ports) for the ways to point them at the
    application.
-
-## How it works
-
-```
-              your browser, your UniFi devices
-                             │
-       8443 UI · 8080 device inform · 3478 STUN · 10001 discovery
-                             │
- your machine ┌──────────────▼───────────────────────────────────┐
-              │ one pod / compose stack, sharing one network     │
-              │ ┌───────────────────────┐   ┌──────────────────┐ │
-              │ │ app                   │   │ mongodb          │ │
-              │ │ UniFi Network         │──▶│ official image,  │ │
-              │ │ Application           │   │ on 127.0.0.1     │ │
-              │ └───────────┬───────────┘   └────────┬─────────┘ │
-              └─────────────┼────────────────────────┼───────────┘
-                volume …-data             volume …-mongodb
-```
-
-- **Two containers.** `app` is this project's image: Ubiquiti's official
-  UniFi Network Application on a Java runtime. `mongodb` is the official
-  MongoDB image. You don't install either on the host.
-- **One settings file** (`.env` for compose, a ConfigMap for podman kube)
-  holds everything you may want to change: the address devices inform to, the
-  time zone, memory, ports. It's applied on every start.
-- **Only the application's ports are published.** MongoDB listens inside the
-  bundle only.
-- **Two volumes keep the data**: the application's (settings, keystore,
-  automatic backups, logs) and MongoDB's database. Upgrading replaces the
-  containers, never the volumes.
-- **Fresh images every day.** A daily automated build checks for a new UniFi
-  release and for updates of the base image, and publishes
-  `ghcr.io/peku33/unifi-network-application:<version>` and `:latest` for amd64
-  and arm64. The setups use `:latest` by default, so pulling it gets you the
-  newest release.
 
 ## Staying up to date
 
@@ -168,8 +167,7 @@ To stay on one version instead, use its tag, e.g. `:10.6.109`, in place of
 | [`podman-compose/`](podman-compose/README.md) | podman-compose, rootless | a systemd user unit | podman users who prefer compose files |
 
 Use one per machine: they publish the same ports. Each also comes with an
-Ansible role, to deploy it on one or many hosts (see `ansible/` in its
-directory).
+Ansible role (see [With Ansible](#with-ansible)).
 
 The sections below are the reference for all three.
 

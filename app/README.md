@@ -7,8 +7,9 @@ arm64. This is the developer side; to run it, see the [top README](../README.md)
 | Path | Purpose |
 |---|---|
 | `build.sh` | Builds the image: looks up the version and checksum, then runs `podman build` (or `docker build`) |
-| `Containerfile` | The image: Temurin 25 JRE + the UniFi Network Application zip + tini |
+| `Containerfile` | The image: Temurin 25 JRE on Ubuntu 26.04 + the UniFi Network Application zip + tini |
 | `bin/` | The container's scripts, installed into `/usr/local/bin` in the image (see [The scripts](#the-scripts)) |
+| `published.env` | What was published last, and what it was built from; written by the workflow (see [Publishing](#publishing)) |
 
 ## Building
 
@@ -59,6 +60,34 @@ checksum the build warns that the download is not verified. A bare
 podman build --build-arg UNIFI_VERSION=<version> [--build-arg UNIFI_SHA256=<sha256>] \
   -t localhost/unifi-network-application:<version> -f Containerfile .
 ```
+
+## Publishing
+
+The workflow
+[`.github/workflows/app-build-and-publish.yml`](../.github/workflows/app-build-and-publish.yml)
+publishes `ghcr.io/peku33/unifi-network-application` for amd64 and arm64,
+each built on a native runner, as `:<version>` and `:latest`. It runs:
+
+- **daily**, publishing when the latest release (from `build.sh --no-build`)
+  or the base image (the `FROM` of the Containerfile, by digest) differs from
+  what `published.env` records, so the image also gets the base image's
+  security updates
+- **on a push to `main`** that changes `app/` or the workflow
+- **by hand**, from the Actions tab (on `main`)
+- **on a pull request**, where it only builds, and publishes nothing
+
+The build uses the base image by the digest it looked up, and labels the
+image with it (`org.opencontainers.image.base.name` / `.base.digest`) and
+with the commit it was built from (`.revision`).
+
+After each publish, the workflow writes `published.env` and commits it to
+`main` as `github-actions[bot]`, e.g. "chore: publish image 10.6.110". The
+commit is the record of the publish: its diff shows what changed, and it
+links to the workflow run. It doesn't start the workflow again. Pull before
+you push, as `main` may have moved.
+
+Only the newest version is rebuilt: an older version tag stays on the base
+image it was built with.
 
 ## What the image expects
 

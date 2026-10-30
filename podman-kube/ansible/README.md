@@ -10,9 +10,9 @@ ready playbook [`unifi.yml`](unifi.yml), or as the role
   (included in the `ansible` package; with `ansible-core`:
   `ansible-galaxy collection install containers.podman`)
 - On the hosts: systemd, and a distribution whose podman package is 4.4 or
-  newer (e.g. Debian 13, Ubuntu 24.04, Fedora, RHEL 9;
-  not Debian 12). The role installs
-  podman, checks its version, and creates the user and everything else.
+  newer (e.g. Debian 13, Ubuntu 24.04, Fedora, RHEL 9; not Debian 12). The
+  role installs podman, checks its version, and creates the user and
+  everything else.
 
 ## Running the playbook
 

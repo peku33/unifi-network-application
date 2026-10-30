@@ -10,7 +10,18 @@
     fail_msg: "unifi_image ({{ unifi_image }}) must have no tag: the tag is unifi_version."
     quiet: true
 
+# Debian and Ubuntu only recommend parts rootless podman needs (newuidmap,
+# pasta, catatonit, ...), so install podman with its recommends there, also
+# on hosts set not to install them. Elsewhere they are dependencies.
+- name: Install podman with its recommended packages
+  when: ansible_facts.os_family == 'Debian'
+  become: true
+  ansible.builtin.apt:
+    name: podman
+    install_recommends: true
+
 - name: Install podman
+  when: ansible_facts.os_family != 'Debian'
   become: true
   ansible.builtin.package:
     name: podman

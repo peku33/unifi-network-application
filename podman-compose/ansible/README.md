@@ -9,9 +9,10 @@ ready playbook [`unifi.yml`](unifi.yml), or as the role
 - On the control node: Ansible with the `containers.podman` collection
   (included in the `ansible` package; with `ansible-core`:
   `ansible-galaxy collection install containers.podman`)
-- On the hosts: podman, podman-compose 1.1.0 or newer (tested with 1.6.0; a
-  distribution package or `pip`) and systemd. The role creates the user and
-  everything else.
+- On the hosts: podman-compose 1.1.0 or newer (tested with 1.6.0; a
+  distribution package or `pip`) and systemd. The role installs podman, and
+  creates the user and everything else. It doesn't install podman-compose,
+  as distributions often ship an older one, but checks its version.
 
 ## Running the playbook
 
@@ -88,6 +89,7 @@ The role stops before changing anything if `unifi_version` is neither
 
 ## What it does
 
+- installs podman from the distribution
 - creates the user and lets its services run without a login session.
   Rootless podman needs a sub-UID/GID range for it, which `useradd` gives a
   new user; for an existing user without one, the role stops and says how to

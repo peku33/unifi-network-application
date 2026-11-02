@@ -1,0 +1,53 @@
+// Renovate (https://docs.renovatebot.com) keeps the pinned versions of the
+// build up to date, by opening a pull request for each update:
+//   - the base image, the FROM of app/Containerfile (by tag; its digest is
+//     followed by the daily run of .github/workflows/app-build-and-publish.yml)
+//   - the actions the workflows use
+//   - the runner images (ubuntu-XX.04) the workflows run on
+// The Dependency Dashboard issue lists pending and waiting updates. See
+// app/README.md#dependency-updates.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", ":semanticCommits"],
+
+  // Only the build. The MongoDB tags of the deployments (mongo:8) are floating
+  // on purpose, and a new MongoDB major needs a manual upgrade.
+  enabledManagers: ["dockerfile", "github-actions", "custom.regex"],
+  dockerfile: {
+    managerFilePatterns: ["/(^|/)Containerfile$/"],
+  },
+
+  customManagers: [
+    // The runners of a matrix (runs-on: ${{ matrix.runner }}), which the
+    // github-actions manager only finds when written in runs-on itself.
+    {
+      customType: "regex",
+      description: "Runner images in workflow matrices",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: ["runner: ubuntu-(?<currentValue>\\d+\\.\\d+)"],
+      depNameTemplate: "ubuntu",
+      datasourceTemplate: "github-runners",
+    },
+  ],
+
+  packageRules: [
+    {
+      matchManagers: ["github-actions"],
+      semanticCommitType: "ci",
+    },
+    // The workflow's runs-on and matrix runners move together.
+    {
+      matchDepNames: ["ubuntu"],
+      matchDatasources: ["github-runners"],
+      groupName: "GitHub Actions runner images",
+      semanticCommitType: "ci",
+    },
+    // Only an LTS Java release is wanted (25, 29, ...): a new major waits for
+    // approval on the Dependency Dashboard instead of opening a pull request.
+    {
+      matchDepNames: ["docker.io/library/eclipse-temurin"],
+      matchUpdateTypes: ["major"],
+      dependencyDashboardApproval: true,
+    },
+  ],
+}
